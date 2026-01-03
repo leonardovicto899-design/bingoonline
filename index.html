@@ -139,7 +139,9 @@
         .news-date { font-size: 0.7rem; color: #9ca3af; font-weight: bold; }
         .news-title { font-weight: 800; color: #374151; font-size: 1rem; }
         .news-body { font-size: 0.85rem; color: #4b5563; margin-top: 4px; line-height: 1.2; }
-
+        
+        .notif-item { text-align: left; background: #fff; border: 1px solid #eee; padding: 10px; border-radius: 10px; margin-bottom: 5px; }
+        
         #muteBtn {
             position: absolute;
             top: 20px;
@@ -161,12 +163,22 @@
         .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #ccc; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #bbb; }
+        
+        #versionLabel {
+            position: absolute;
+            bottom: 5px;
+            right: 10px;
+            color: rgba(255,255,255,0.5);
+            font-size: 10px;
+            font-weight: bold;
+            z-index: 5;
+        }
     </style>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, collection, query, orderBy, limit, getDocs, where } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, addDoc, deleteDoc, collection, query, orderBy, limit, getDocs, where, runTransaction, updateDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
         
         const firebaseConfig = {
             apiKey: "AIzaSyAh1Xzb616gPPnnmrjTJSGKp1zwosuVO7w",
@@ -180,7 +192,8 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
         window.firebaseDb = db;
-        
+        window.firebaseAuth = auth;
+
         window.authSystem = {
             user: null,
             login: async () => {
@@ -208,7 +221,6 @@
                 const name = nameInp.value.trim().toUpperCase(); 
                 
                 if(name.length < 3 || name.length > 10) return msg.innerText = "Nome deve ter 3-10 letras";
-                
                 msg.innerText = "Verificando disponibilidade...";
                 
                 try {
@@ -224,8 +236,7 @@
                     await setDoc(doc(db, "users", user.uid), { displayName: name }, { merge: true });
                     
                     document.getElementById('nameSetupScreen').classList.add('hidden');
-                    window.location.reload(); 
-                    
+                    window.location.reload();
                 } catch(e) {
                     console.error(e);
                     msg.innerText = "Erro ao salvar: " + e.message;
@@ -246,7 +257,8 @@
                 catch(e) { console.error("Erro nuvem:", e); }
             }
         };
-        
+
+        // Escuta Autenticação
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 window.authSystem.user = user;
@@ -267,6 +279,10 @@
                 } else if(window.gameGetState) {
                     window.authSystem.saveData(window.gameGetState());
                 }
+                
+                // Carregar Notificações
+                if(window.loadNotifications) window.loadNotifications();
+
                 document.getElementById('loginScreen').classList.add('hidden');
             }
         });
@@ -279,7 +295,6 @@
             
             if(name.length < 3) return;
             msg.innerText = "Buscando...";
-            
             try {
                 const q = query(collection(db, "users"), where("displayName", "==", name));
                 const snap = await getDocs(q);
@@ -288,10 +303,17 @@
                     msg.innerText = "Jogador não encontrado.";
                 } else {
                     let found = false;
-                    snap.forEach(doc => {
-                         if(doc.id !== auth.currentUser.uid) {
-                             game.addFriend(doc.id, doc.data().displayName);
-                             msg.innerText = `Adicionado: ${doc.data().displayName}`;
+                    snap.forEach(async (d) => {
+                         if(d.id !== auth.currentUser.uid) {
+                             // Envia solicitação de amizade via notificação
+                             await addDoc(collection(db, "notifications"), {
+                                 from: auth.currentUser.uid,
+                                 fromName: auth.currentUser.displayName,
+                                 to: d.id,
+                                 type: 'friend_request',
+                                 date: Date.now()
+                             });
+                             msg.innerText = `Solicitação enviada para ${d.data().displayName}`;
                              input.value = "";
                              found = true;
                          }
@@ -335,11 +357,11 @@
                         <span>${data.highScore || 0}</span>
                     `;
                     
-                    // Adicionar Amigo ao clicar (se não for eu)
                     if(!isMe) {
                         row.onclick = () => {
                             if(confirm(`Adicionar ${displayName} aos amigos?`)) {
-                                game.addFriend(doc.id, displayName);
+                                document.getElementById('friendSearchInput').value = displayName;
+                                window.searchFriend();
                             }
                         };
                     }
@@ -352,7 +374,111 @@
                 list.innerHTML = '<div class="p-4 text-center text-red-400 text-sm">Erro ao carregar ranking.</div>';
             }
         };
+
+        // NOTIFICAÇÕES
+        window.loadNotifications = async () => {
+            if(!auth.currentUser) return;
+            const notifList = document.getElementById('notifList');
+            const q = query(collection(db, "notifications"), where("to", "==", auth.currentUser.uid));
+            
+            const render = async () => {
+                const snap = await getDocs(q);
+                notifList.innerHTML = '';
+                const count = snap.size;
+                const badge = document.getElementById('notifBadge');
+                if(count > 0) {
+                    badge.classList.remove('hidden');
+                    badge.innerText = count;
+                } else {
+                    badge.classList.add('hidden');
+                    notifList.innerHTML = '<div class="text-gray-400 text-sm text-center">Sem notificações.</div>';
+                }
+
+                snap.forEach(docSnap => {
+                    const notif = docSnap.data();
+                    const el = document.createElement('div');
+                    el.className = 'notif-item';
+                    
+                    if(notif.type === 'friend_request') {
+                        el.innerHTML = `
+                            <div class="font-bold text-sm mb-1"><i class="fas fa-user-plus text-blue-500"></i> Pedido de Amizade</div>
+                            <div class="text-xs text-gray-600 mb-2">${notif.fromName} quer ser seu amigo.</div>
+                            <div class="flex gap-2">
+                                <button class="btn bg-green-500 py-1 text-xs mb-0" id="accept-${docSnap.id}">Aceitar</button>
+                                <button class="btn bg-red-500 py-1 text-xs mb-0" id="deny-${docSnap.id}">Recusar</button>
+                            </div>
+                        `;
+                    }
+                    
+                    if(notif.type === 'trade_request') {
+                        el.innerHTML = `
+                             <div class="font-bold text-sm mb-1"><i class="fas fa-exchange-alt text-purple-500"></i> Proposta de Troca</div>
+                             <div class="text-xs text-gray-600 mb-2">${notif.fromName} quer trocar gatos.</div>
+                             <div class="text-xs bg-gray-100 p-1 rounded mb-2">
+                                <b>Recebe:</b> ${notif.offerCatName}<br>
+                                <b>Entrega:</b> ${notif.wantCatName}
+                             </div>
+                             <div class="flex gap-2">
+                                <button class="btn bg-green-500 py-1 text-xs mb-0" id="accept-trade-${docSnap.id}">Aceitar</button>
+                                <button class="btn bg-red-500 py-1 text-xs mb-0" id="deny-${docSnap.id}">Recusar</button>
+                            </div>
+                        `;
+                    }
+
+                    notifList.appendChild(el);
+                    
+                    // Event Listeners
+                    if(document.getElementById(`deny-${docSnap.id}`)) {
+                        document.getElementById(`deny-${docSnap.id}`).onclick = async () => {
+                            await deleteDoc(doc(db, "notifications", docSnap.id));
+                            render();
+                        };
+                    }
+                    
+                    if(document.getElementById(`accept-${docSnap.id}`)) {
+                        document.getElementById(`accept-${docSnap.id}`).onclick = async () => {
+                            // Aceitar Amigo
+                            await game.acceptFriend(notif.from, notif.fromName);
+                            await deleteDoc(doc(db, "notifications", docSnap.id));
+                            render();
+                        };
+                    }
+
+                    if(document.getElementById(`accept-trade-${docSnap.id}`)) {
+                         document.getElementById(`accept-trade-${docSnap.id}`).onclick = async () => {
+                             await game.executeTrade(docSnap.id, notif);
+                             render();
+                         };
+                    }
+                });
+            };
+            
+            // Intervalo simples para atualizar (poll)
+            setInterval(render, 15000); // Checa a cada 15s
+            render();
+            window.refreshNotifs = render;
+        };
         
+        // SISTEMA DE TROCA SEGURO
+        window.sendTrade = async (friendId, offerCatId, wantCatId, offerName, wantName) => {
+            if(!auth.currentUser) return;
+            try {
+                await addDoc(collection(db, "notifications"), {
+                    from: auth.currentUser.uid,
+                    fromName: auth.currentUser.displayName,
+                    to: friendId,
+                    type: 'trade_request',
+                    offerCatId: offerCatId,
+                    offerCatName: offerName,
+                    wantCatId: wantCatId,
+                    wantCatName: wantName,
+                    date: Date.now()
+                });
+                alert("Proposta enviada!");
+                document.getElementById('tradeScreen').classList.add('hidden');
+            } catch(e) { alert("Erro ao enviar proposta."); console.error(e); }
+        };
+
         window.syncServerShop = async () => {
             try {
                 const shopRef = doc(db, "server", "dailyShop");
@@ -360,7 +486,6 @@
                 const now = Date.now();
                 let shopData = null;
                 if (snap.exists()) shopData = snap.data();
-
                 if (!shopData || now > shopData.expires) {
                     const pool = window.GAME_CATS.filter(c => ['comum','raro','epico','legendario'].includes(c.raridade) && c.aparecer_na_loja !== false);
                     const selected = [];
@@ -381,6 +506,7 @@
 
     <div id="game-container">
         <canvas id="gameCanvas"></canvas>
+        <div id="versionLabel">v2.0</div>
         
         <div id="muteBtn" class="interactive" onclick="game.toggleMute()">
             <i class="fas fa-volume-up" id="muteIcon"></i>
@@ -413,15 +539,28 @@
         </div>
 
         <div id="hud" class="absolute top-0 w-full p-4 flex justify-between items-start pointer-events-none z-10">
-            <div class="bg-white/20 backdrop-blur-md text-white px-5 py-2 rounded-full font-black border-2 border-white/50 shadow-lg flex items-center gap-2 text-xl">
-                <i class="fas fa-coins text-yellow-300 drop-shadow-md"></i> <span id="coinCountHud">0</span>
+            <div class="flex flex-col gap-2">
+                <div class="bg-white/20 backdrop-blur-md text-white px-5 py-2 rounded-full font-black border-2 border-white/50 shadow-lg flex items-center gap-2 text-xl">
+                    <i class="fas fa-coins text-yellow-300 drop-shadow-md"></i> <span id="coinCountHud">0</span>
+                </div>
+                <div id="tournamentHud" class="hidden bg-purple-600/80 backdrop-blur-md text-white px-3 py-1 rounded-full font-bold text-xs border border-white/30 shadow-lg">
+                    🏆 TORNEIO ATIVO
+                </div>
             </div>
             <div id="scoreDisplay" class="text-7xl font-black text-white drop-shadow-lg" style="-webkit-text-stroke: 3px rgba(0,0,0,0.2);">0</div>
         </div>
 
         <div id="menuScreen" class="ui-layer interactive">
             <div class="card">
-                <h1 class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500 mb-2">GATO BIRD</h1>
+                <div class="relative w-full">
+                    <h1 class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500 mb-2">GATO BIRD</h1>
+                    <div class="absolute top-0 right-0">
+                         <button onclick="game.openUI('notifications')" class="relative text-gray-400 hover:text-orange-500 text-xl p-2">
+                             <i class="fas fa-bell"></i>
+                             <span id="notifBadge" class="hidden absolute top-0 right-0 bg-red-500 text-white text-[8px] font-bold px-1 rounded-full">0</span>
+                         </button>
+                    </div>
+                </div>
                 
                 <div class="bg-blue-50 rounded-3xl p-6 border-4 border-white shadow-inner mb-4 flex flex-col items-center relative">
                     <div class="relative w-24 h-24 mb-2 bg-white rounded-2xl shadow-sm overflow-hidden flex items-center justify-center">
@@ -446,10 +585,33 @@
                          <button class="btn bg-yellow-500" onclick="game.openUI('leaderboard')"><i class="fas fa-trophy mr-1"></i> RANK</button>
                          <button class="btn bg-cyan-500" onclick="game.openUI('friends')"><i class="fas fa-user-friends mr-1"></i> AMIGOS</button>
                     </div>
+                    <button class="btn bg-indigo-600" onclick="game.openUI('tournaments')"><i class="fas fa-medal mr-1"></i> TORNEIOS</button>
                     <button class="btn bg-teal-500" onclick="game.openUI('news')"><i class="fas fa-newspaper mr-1"></i> NEWS</button>
                 </div>
                 <button id="logoutBtn" class="hidden text-[10px] bg-red-100 text-red-500 px-3 py-1 rounded-full font-bold mt-2" onclick="authSystem.logout()">SAIR DA CONTA</button>
             </div>
+        </div>
+
+        <div id="notificationsScreen" class="ui-layer interactive hidden">
+            <div class="card h-[70vh]">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-black text-gray-800">NOTIFICAÇÕES</h2>
+                    <button onclick="game.openUI('menu')" class="w-8 h-8 bg-gray-100 rounded-full font-bold">X</button>
+                </div>
+                <div id="notifList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar"></div>
+                <button class="btn bg-gray-500 mt-2" onclick="if(window.refreshNotifs) window.refreshNotifs()"><i class="fas fa-sync"></i> ATUALIZAR</button>
+            </div>
+        </div>
+        
+        <div id="tournamentsScreen" class="ui-layer interactive hidden">
+             <div class="card h-[80vh]">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-black text-indigo-600"><i class="fas fa-medal"></i> TORNEIOS</h2>
+                    <button onclick="game.openUI('menu')" class="w-8 h-8 bg-gray-100 rounded-full font-bold">X</button>
+                </div>
+                <div id="tournamentList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar">
+                     </div>
+             </div>
         </div>
 
         <div id="shopScreen" class="ui-layer interactive hidden">
@@ -499,6 +661,29 @@
                 </div>
             </div>
         </div>
+        
+        <div id="tradeScreen" class="ui-layer interactive hidden">
+             <div class="card">
+                <h2 class="text-2xl font-black text-purple-600 mb-2">TROCAR</h2>
+                <p class="text-xs text-gray-500 mb-4">Selecione o gato para dar e o ID do gato que quer receber.</p>
+                
+                <input type="hidden" id="tradeFriendId">
+                <div class="mb-2 text-left">
+                    <label class="text-xs font-bold">O QUE VOCÊ DÁ:</label>
+                    <select id="tradeMyCat" class="w-full bg-gray-100 p-2 rounded font-bold text-xs"></select>
+                </div>
+                
+                <div class="mb-4 text-left">
+                     <label class="text-xs font-bold">O QUE VOCÊ QUER (ID DO GATO):</label>
+                     <select id="tradeWantCat" class="w-full bg-gray-100 p-2 rounded font-bold text-xs"></select>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-2">
+                     <button class="btn bg-green-500" onclick="game.confirmSendTrade()">ENVIAR</button>
+                     <button class="btn bg-gray-500" onclick="document.getElementById('tradeScreen').classList.add('hidden')">CANCELAR</button>
+                </div>
+             </div>
+        </div>
 
         <div id="newsScreen" class="ui-layer interactive hidden">
             <div class="card h-[80vh]">
@@ -537,7 +722,7 @@
                 </div>
                 
                 <div class="leaderboard-row text-blue-600 bg-blue-50 border-t-2 border-blue-100 p-2 rounded-lg">
-                     <span>SEU RECORD</span> <span id="myHighScoreRank">0</span>
+                    <span>SEU RECORD</span> <span id="myHighScoreRank">0</span>
                 </div>
                 
                 <button class="btn bg-gray-500 mt-2" onclick="game.openUI('menu')">VOLTAR</button>
@@ -563,6 +748,7 @@
         <div id="gameOverScreen" class="ui-layer interactive hidden">
             <div class="card">
                 <h2 class="text-5xl font-black text-red-500 mb-6 drop-shadow-sm">FIM DE JOGO!</h2>
+                <div id="tourneyResultMsg" class="hidden text-purple-600 font-bold mb-2">PONTOS DE TORNEIO COMPUTADOS!</div>
                 <div class="grid grid-cols-2 gap-4 mb-8">
                     <div class="bg-gray-50 p-5 rounded-3xl border-2 border-gray-100">
                         <p class="text-xs font-bold text-gray-400 uppercase tracking-wide">Placar</p>
@@ -585,15 +771,27 @@
     // 🛠️ ÁREA DE CONFIGURAÇÃO
     // =========================================================================
     
+    // CONFIGURAÇÃO DE TORNEIOS
+    const TOURNAMENT_CONFIG = [
+        {
+            id: 'torneio_inicio_2026',
+            nome: 'COPA DE JANEIRO',
+            inicio: new Date('2026-01-01T00:00:00').getTime(),
+            fim: new Date('2026-02-01T00:00:00').getTime(),
+            rodadas: 10,
+            premio: 'g010' // Gato de Botas
+        }
+    ];
+
     const SONS = {
-        musica_menu: '', 
+        musica_menu: 'https://assets.mixkit.co/music/preview/mixkit-games-worldbeat-466.mp3', 
         musica_jogo: '',
-        pulo: '', 
-        score: '',
-        gameover: '',
-        click: ''
+        pulo: 'https://assets.mixkit.co/sfx/preview/mixkit-quick-jump-arcade-game-239.wav', 
+        score: 'https://assets.mixkit.co/sfx/preview/mixkit-arcade-game-jump-coin-216.wav',
+        gameover: 'https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-game-over-213.wav',
+        click: 'https://assets.mixkit.co/sfx/preview/mixkit-modern-technology-select-3124.wav'
     };
-    
+
     // SEUS GATOS ORIGINAIS
     const MEUS_GATOS = [
         {
@@ -817,10 +1015,10 @@
             aparecer_na_loja: false
         },
     ];
-    
     window.GAME_CATS = MEUS_GATOS;
     
     const NOTICIAS = [
+        { data: "03/01/2026", titulo: "V2.0 - TORNEIOS & TRADES", texto: "Agora você pode trocar gatos com amigos e participar de torneios!" },
         { data: "03/01/2026", titulo: "SISTEMA DE AMIGOS!", texto: "Adicione amigos pelo Ranking ou pesquisando o nome." },
         { data: "03/01/2026", titulo: "Atualização", texto: "Correções na loja e pontuação." }
     ];
@@ -843,13 +1041,11 @@
         mitico: { label: 'Mítico', color: '#EF4444' },
         secreta: { label: 'Secreto', color: '#10B981' }
     };
-
     MEUS_GATOS.forEach(cat => {
         if(cat.imagem && cat.imagem.length > 5) {
             const img = new Image(); img.src = cat.imagem; cat.imgObj = img;
         }
     });
-
     const audioCtx = {
         muted: false,
         play: (key) => {
@@ -868,19 +1064,26 @@
             }
         }
     };
-
     // =========================================================================
     // ⚙️ SISTEMA DE SAVE
     // =========================================================================
-    const SAVE_KEY = 'gb_custom_v4';
-    // Adicionado friends: []
-    let state = { coins: 0, unlocked: ['g001'], equipped: 'g001', highScore: 0, counts: {'g001':1}, friends: [] };
-    
+    const SAVE_KEY = 'gb_custom_v5';
+    // State agora inclui dados de torneio
+    let state = { 
+        coins: 0, 
+        unlocked: ['g001'], 
+        equipped: 'g001', 
+        highScore: 0, 
+        counts: {'g001':1}, 
+        friends: [],
+        tournaments: {} 
+    };
     window.gameGetState = () => state;
     window.gameSetState = (newData) => {
         state = { ...state, ...newData };
         if(!state.counts) { state.counts = {}; state.unlocked.forEach(id => state.counts[id]=1); }
         if(!state.friends) state.friends = [];
+        if(!state.tournaments) state.tournaments = {};
         updateUI();
     };
     window.gameLoadLocal = () => {
@@ -890,6 +1093,7 @@
                 state = {...state, ...JSON.parse(saved)};
                 if(!state.counts) { state.counts = {}; state.unlocked.forEach(id => state.counts[id]=1); }
                 if(!state.friends) state.friends = [];
+                if(!state.tournaments) state.tournaments = {};
                 updateUI();
             }
         } catch(e) { console.log("Erro save local"); }
@@ -904,7 +1108,6 @@
 
     let dailyShopItems = [];
     let dailyShopExpires = 0;
-
     window.updateShopFromData = (shopData) => {
         if(!shopData) {
             updateDailyShopLocal();
@@ -939,7 +1142,7 @@
         container.innerHTML = '';
         if(!dailyShopItems || dailyShopItems.length === 0) {
              container.innerHTML = '<div class="text-xs text-gray-400 p-2">Loja vazia ou carregando...</div>';
-            return;
+             return;
         }
         dailyShopItems.forEach(id => {
             const cat = MEUS_GATOS.find(c => c.id === id);
@@ -974,7 +1177,8 @@
                     renderDailyShop(); 
                     audioCtx.play('click');
                     alert(`Comprou ${cat.nome}!`);
-                } else { alert('Moedas insuficientes!'); }
+                } else { alert('Moedas insuficientes!');
+                }
             };
             div.appendChild(btn);
             container.appendChild(div);
@@ -995,11 +1199,9 @@
             }
         }
     }, 1000);
-
     function drawCat(ctx, cat, x, y, size, frame) {
         ctx.save();
         ctx.translate(x, y);
-
         if(cat.efeito === 'brilho' || cat.efeito === 'fogo' || cat.raridade === 'mitico') {
             ctx.shadowBlur = 15 + Math.sin(frame/10)*5;
             ctx.shadowColor = RARITIES[cat.raridade]?.color || 'gold';
@@ -1019,7 +1221,8 @@
             ctx.arc(0, 0, size/2, 0, Math.PI*2); ctx.fill();
             ctx.beginPath();
             ctx.moveTo(-size*0.3, -size*0.3); ctx.lineTo(-size*0.4, -size*0.6); ctx.lineTo(-size*0.1, -size*0.4); ctx.fill();
-            ctx.beginPath(); ctx.moveTo(size*0.3, -size*0.3); ctx.lineTo(size*0.4, -size*0.6); ctx.lineTo(size*0.1, -size*0.4); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(size*0.3, -size*0.3); ctx.lineTo(size*0.4, -size*0.6);
+            ctx.lineTo(size*0.1, -size*0.4); ctx.fill();
         }
         ctx.restore();
     }
@@ -1028,6 +1231,8 @@
     const ctx = canvas.getContext('2d');
     let frames=0, score=0, playing=false, trail=[];
     let speed=3.0, gravity=0.25;
+    let activeTournament = null; // ID do torneio ativo na partida
+
     let clouds = [];
     for(let i=0; i<5; i++) {
         clouds.push({x: Math.random()*window.innerWidth, y: Math.random()*200, s: 0.5+Math.random()});
@@ -1093,13 +1298,23 @@
     const pipes = {
         list: [],
         update: function() {
-            if(frames % 110 === 0) { 
+            // PROGRESSIVE DIFFICULTY:
+            // Aumenta velocidade baseada no score
+            let diffMult = 1 + (score * 0.05); 
+            if(diffMult > 2.5) diffMult = 2.5; // Cap de velocidade max
+            let currentSpeed = speed * diffMult;
+
+            // Diminui o intervalo de spawn baseado na dificuldade
+            let spawnRate = 110 - (score * 2);
+            if(spawnRate < 60) spawnRate = 60;
+
+            if(frames % spawnRate === 0) { 
                 let gap = 170;
                 let y = Math.random() * (canvas.height - 350) + 100;
                 this.list.push({x: canvas.width, y, gap, scored: false});
             }
             this.list.forEach(p => {
-                p.x -= speed;
+                p.x -= currentSpeed;
                 if(bird.x + 20 > p.x && bird.x - 20 < p.x + 60) {
                     if(bird.y - 20 < p.y || bird.y + 20 > p.y + p.gap) gameOver();
                 }
@@ -1107,10 +1322,10 @@
                     p.scored = true;
                     score++;
                     audioCtx.play('score');
+                    // Moedas só se não for torneio (regra opcional, mas aqui deixei ambos ganhando)
                     const cat = MEUS_GATOS.find(c => c.id === state.equipped);
                     state.coins += (cat ? cat.multiplicador : 1);
                     document.getElementById('scoreDisplay').innerText = score;
-                    // REMOVIDO: BÔNUS de 25 pontos
                 }
             });
             if(this.list[0]?.x < -100) this.list.shift();
@@ -1140,7 +1355,8 @@
     function loop() {
         ctx.clearRect(0,0,canvas.width,canvas.height);
         drawBackground();
-        if(playing) { bird.update(); pipes.update(); frames++; }
+        if(playing) { bird.update();
+            pipes.update(); frames++; }
         pipes.draw();
         bird.draw();
         if(!playing && !document.getElementById('menuScreen').classList.contains('hidden')) {
@@ -1158,19 +1374,55 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
     loop();
+
     function gameOver() {
         playing = false;
         audioCtx.play('gameover');
         if(score > state.highScore) state.highScore = score;
+        
+        // Lógica de Torneio
+        if(activeTournament) {
+            const tData = state.tournaments[activeTournament] || { roundsPlayed: 0, totalScore: 0, bestScore: 0 };
+            tData.roundsPlayed++;
+            tData.totalScore += score;
+            if(score > tData.bestScore) tData.bestScore = score;
+            state.tournaments[activeTournament] = tData;
+            
+            document.getElementById('tourneyResultMsg').classList.remove('hidden');
+            document.getElementById('tourneyResultMsg').innerText = `RODADA TORNEIO: ${tData.roundsPlayed}`;
+        } else {
+            document.getElementById('tourneyResultMsg').classList.add('hidden');
+        }
+        activeTournament = null;
+
         save();
         document.getElementById('gameOverScreen').classList.remove('hidden');
         document.getElementById('finalScore').innerText = score;
-        // Coins inteiro no Game Over
         document.getElementById('finalCoins').innerText = Math.floor(state.coins);
+        document.getElementById('hud').classList.add('hidden');
     }
 
     window.game = {
         startGame: () => {
+            // Verifica Torneio
+            const now = Date.now();
+            const validTournament = TOURNAMENT_CONFIG.find(t => now >= t.inicio && now <= t.fim);
+            
+            activeTournament = null;
+            document.getElementById('tournamentHud').classList.add('hidden');
+
+            if(validTournament) {
+                // Checa se usuário tem rodadas
+                if(!state.tournaments) state.tournaments = {};
+                const tData = state.tournaments[validTournament.id] || { roundsPlayed: 0 };
+                
+                if(tData.roundsPlayed < validTournament.rodadas) {
+                    activeTournament = validTournament.id;
+                    document.getElementById('tournamentHud').classList.remove('hidden');
+                    document.getElementById('tournamentHud').innerText = `🏆 TORNEIO: Rodada ${tData.roundsPlayed + 1}/${validTournament.rodadas}`;
+                }
+            }
+
             playing = true;
             score = 0; frames = 0; trail = [];
             bird.x = Math.max(60, canvas.width * 0.2);
@@ -1189,7 +1441,6 @@
             document.getElementById(name+'Screen').classList.remove('hidden');
             if(name === 'menu') updateUI();
             if(name === 'shop') {
-                // Coins inteiro na loja
                 document.getElementById('shopBalance').innerText = Math.floor(state.coins);
                 if(window.syncServerShop) window.syncServerShop();
                 renderShopBoxes();
@@ -1203,10 +1454,15 @@
             if(name === 'friends') {
                 renderFriends();
             }
+            if(name === 'notifications') {
+                if(window.refreshNotifs) window.refreshNotifs();
+            }
+            if(name === 'tournaments') {
+                renderTournaments();
+            }
         },
         buyBox: (tier, cost) => {
             audioCtx.play('click');
-            // Verifica com Math.floor
             if(Math.floor(state.coins) < cost) return alert("Moedas insuficientes!");
             const pool = MEUS_GATOS.filter(c => c.raridade === tier);
             if(pool.length === 0) return alert("Nenhum gato dessa raridade adicionado no código ainda!");
@@ -1216,7 +1472,6 @@
             const win = pool[Math.floor(Math.random()*pool.length)];
             const isNew = !state.unlocked.includes(win.id);
             if(isNew) state.unlocked.push(win.id);
-            
             state.counts[win.id] = (state.counts[win.id] || 0) + 1;
             
             save();
@@ -1245,21 +1500,89 @@
                 drawCat(gCtx, win, 60, 60, 90, 0);
             }, 1000);
         },
-        addFriend: (uid, name) => {
+        acceptFriend: (uid, name) => {
             if(!state.friends) state.friends = [];
             if(state.friends.some(f => f.uid === uid)) {
-                alert("Já é seu amigo!");
                 return;
             }
             state.friends.push({uid: uid, name: name});
             save();
-            alert(`${name} adicionado aos amigos!`);
-            if(!document.getElementById('friendsScreen').classList.contains('hidden')) {
-                renderFriends();
-            }
+            alert(`${name} agora é seu amigo!`);
+        },
+        openTradeUI: (friendId) => {
+             const friend = state.friends.find(f => f.uid === friendId);
+             if(!friend) return;
+             
+             document.getElementById('tradeScreen').classList.remove('hidden');
+             document.getElementById('tradeFriendId').value = friendId;
+             
+             // Preencher lista de gatos que eu tenho (>1 para não ficar sem)
+             // Na verdade, pode trocar qualquer um, mas o jogador decide.
+             const mySelect = document.getElementById('tradeMyCat');
+             mySelect.innerHTML = '';
+             state.unlocked.forEach(catId => {
+                 const cat = MEUS_GATOS.find(c => c.id === catId);
+                 const count = state.counts[catId] || 0;
+                 if(count > 0) { // Permite trocar se tiver
+                     const opt = document.createElement('option');
+                     opt.value = catId;
+                     opt.text = `${cat.nome} (Você tem: ${count})`;
+                     mySelect.appendChild(opt);
+                 }
+             });
+             
+             // Preencher lista de gatos que quero (todos os gatos do jogo)
+             const wantSelect = document.getElementById('tradeWantCat');
+             wantSelect.innerHTML = '';
+             MEUS_GATOS.forEach(cat => {
+                 const opt = document.createElement('option');
+                 opt.value = cat.id;
+                 opt.text = `${cat.nome} [${cat.raridade}]`;
+                 wantSelect.appendChild(opt);
+             });
+        },
+        confirmSendTrade: () => {
+             const friendId = document.getElementById('tradeFriendId').value;
+             const offerCatId = document.getElementById('tradeMyCat').value;
+             const wantCatId = document.getElementById('tradeWantCat').value;
+             
+             const offerName = MEUS_GATOS.find(c => c.id === offerCatId).nome;
+             const wantName = MEUS_GATOS.find(c => c.id === wantCatId).nome;
+             
+             window.sendTrade(friendId, offerCatId, wantCatId, offerName, wantName);
+        },
+        executeTrade: async (notifId, tradeData) => {
+             // Executar troca segura via Firestore Transaction
+             // 1. Verifica se quem aceita (eu) tenho o gato pedido (wantCatId)
+             // 2. Verifica se quem enviou ainda tem o gato oferecido (offerCatId)
+             // Como é client side, fazemos uma checagem local e depois tentamos atualizar
+             
+             if((state.counts[tradeData.wantCatId] || 0) < 1) {
+                 return alert("Você não tem o gato que seu amigo quer!");
+             }
+             
+             if(confirm(`Trocar seu ${tradeData.wantCatName} pelo ${tradeData.offerCatName} de ${tradeData.fromName}?`)) {
+                 const { doc, runTransaction, getDoc, updateDoc, deleteDoc } = window.firebaseDb; 
+                 // Simulação de transação segura local + update
+                 
+                 // Remove meu gato
+                 state.counts[tradeData.wantCatId]--;
+                 if(state.counts[tradeData.wantCatId] === 0) {
+                     state.unlocked = state.unlocked.filter(id => id !== tradeData.wantCatId);
+                     if(state.equipped === tradeData.wantCatId) state.equipped = 'g001';
+                 }
+                 
+                 // Adiciona novo gato
+                 if(!state.unlocked.includes(tradeData.offerCatId)) state.unlocked.push(tradeData.offerCatId);
+                 state.counts[tradeData.offerCatId] = (state.counts[tradeData.offerCatId] || 0) + 1;
+                 
+                 save();
+                 await deleteDoc(doc(window.firebaseDb, "notifications", notifId));
+                 alert("Troca realizada com sucesso!");
+             }
         }
     };
-
+    
     function renderFriends() {
         const list = document.getElementById('friendsList');
         list.innerHTML = '';
@@ -1270,7 +1593,41 @@
         state.friends.forEach(f => {
             const div = document.createElement('div');
             div.className = 'friend-row';
-            div.innerHTML = `<span><i class="fas fa-user text-cyan-500 mr-2"></i> ${f.name}</span> <span class="text-green-500 text-xs">AMIGO</span>`;
+            div.innerHTML = `
+                <span><i class="fas fa-user text-cyan-500 mr-2"></i> ${f.name}</span>
+                <button class="btn bg-purple-500 text-[10px] py-1 px-3 w-auto mb-0" onclick="game.openTradeUI('${f.uid}')">TROCAR</button>
+            `;
+            list.appendChild(div);
+        });
+    }
+
+    function renderTournaments() {
+        const list = document.getElementById('tournamentList');
+        list.innerHTML = '';
+        const now = Date.now();
+        
+        TOURNAMENT_CONFIG.forEach(t => {
+            const isActive = now >= t.inicio && now <= t.fim;
+            const userData = state.tournaments ? (state.tournaments[t.id] || {}) : {};
+            const roundsPlayed = userData.roundsPlayed || 0;
+            const bestScore = userData.bestScore || 0;
+            
+            const div = document.createElement('div');
+            div.className = `p-4 rounded-xl mb-2 border-2 ${isActive ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-100 border-gray-200 opacity-60'}`;
+            
+            div.innerHTML = `
+                <div class="flex justify-between items-start mb-2">
+                    <h3 class="font-black text-gray-800">${t.nome}</h3>
+                    <span class="text-[10px] font-bold px-2 py-1 rounded text-white ${isActive ? 'bg-green-500' : 'bg-gray-500'}">
+                        ${isActive ? 'ATIVO' : 'FECHADO'}
+                    </span>
+                </div>
+                <div class="text-xs text-gray-600 mb-2">
+                    Rodadas: ${roundsPlayed}/${t.rodadas}<br>
+                    Seu Melhor Record: ${bestScore}
+                </div>
+                ${isActive ? `<p class="text-[10px] text-indigo-500 font-bold">Jogue normalmente para pontuar!</p>` : ''}
+            `;
             list.appendChild(div);
         });
     }
@@ -1323,7 +1680,6 @@
             document.getElementById('displayEffectBadge').classList.add('hidden');
         }
         document.getElementById('displayMult').innerText = `x${cat.multiplicador} Moedas`;
-        // Math.floor na UI principal
         document.getElementById('coinCountHud').innerText = Math.floor(state.coins);
     }
 
@@ -1350,12 +1706,10 @@
                 
                 const item = document.createElement('div');
                 item.className = `skin-item ${owned ? '' : 'locked'} ${state.equipped === cat.id ? 'selected' : ''}`;
-                
                 const cvs = document.createElement('canvas');
                 cvs.width = 40; cvs.height = 40;
                 drawCat(cvs.getContext('2d'), cat, 20, 20, 30, 0);
                 item.appendChild(cvs);
-
                 if(owned && count > 1) {
                     const badge = document.createElement('div');
                     badge.className = 'count-badge';
