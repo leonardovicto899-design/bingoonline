@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Gato Bird - Versão Corrigida</title>
+    <title>Gato Bird - Versão Mercado</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -142,6 +142,10 @@
         
         .notif-item { text-align: left; background: #fff; border: 1px solid #eee; padding: 10px; border-radius: 10px; margin-bottom: 5px; }
         
+        .market-item {
+            background: white; border: 2px solid #e5e7eb; border-radius: 12px; padding: 10px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
+        }
+
         #muteBtn {
             position: absolute;
             top: 20px;
@@ -202,7 +206,7 @@
             if(auth.currentUser) {
                 updateDoc(doc(db, "users", auth.currentUser.uid), { lastActive: Date.now() }).catch(e => console.log("Erro ao atualizar online:", e));
             }
-        }, 60000); 
+        }, 60000);
 
         window.authSystem = {
             user: null,
@@ -249,7 +253,6 @@
                         lastActive: Date.now(),
                         highScore: 0
                     }, { merge: true });
-                    
                     document.getElementById('nameSetupScreen').classList.add('hidden');
                     window.location.reload();
                 } catch(e) {
@@ -302,11 +305,10 @@
                 
                 // *** PONTO CRÍTICO: INICIAR LISTENER ***
                 window.startNotificationListener();
-
                 document.getElementById('loginScreen').classList.add('hidden');
             }
         });
-        
+
         // --- FUNÇÕES DE AMIGOS E RANKING ---
         window.searchFriend = async () => {
             const input = document.getElementById('friendSearchInput');
@@ -325,7 +327,6 @@
                     let found = false;
                     snap.forEach(async (d) => {
                          if(d.id !== auth.currentUser.uid) {
-                             // Verifica se já não são amigos (opcional, mas bom)
                              // Envia solicitação
                              try {
                                  await addDoc(collection(db, "notifications"), {
@@ -402,23 +403,15 @@
             }
         };
 
-        // NOTIFICAÇÕES EM TEMPO REAL (CORRIGIDO)
+        // NOTIFICAÇÕES EM TEMPO REAL
         window.startNotificationListener = () => {
-            if(!auth.currentUser) {
-                console.log("Tentou iniciar listener sem usuário");
-                return;
-            }
-            console.log("Iniciando listener para:", auth.currentUser.uid);
-            
+            if(!auth.currentUser) return;
             const notifList = document.getElementById('notifList');
-            // Query para buscar onde 'to' == 'meu ID'
-            const q = query(collection(db, "notifications"), where("to", "==", auth.currentUser.uid));
             
-            // onSnapshot mantem a conexão aberta
+            const q = query(collection(db, "notifications"), where("to", "==", auth.currentUser.uid));
             onSnapshot(q, (snapshot) => {
                 notifList.innerHTML = '';
                 let validCount = 0;
-                const now = Date.now();
                 
                 if(snapshot.empty) {
                     document.getElementById('notifBadge').classList.add('hidden');
@@ -428,14 +421,8 @@
 
                 snapshot.forEach(docSnap => {
                     const notif = docSnap.data();
-                    
-                    // Expira convites de troca após 30s
-                    if(notif.type === 'trade_invite' && (now - notif.date > 30000)) {
-                         deleteDoc(doc(db, "notifications", docSnap.id)); 
-                         return;
-                    }
-
                     validCount++;
+                    
                     const el = document.createElement('div');
                     el.className = 'notif-item';
                     
@@ -450,22 +437,9 @@
                         `;
                     }
                     
-                    if(notif.type === 'trade_invite') {
-                         const timeLeft = Math.max(0, 30 - Math.floor((now - notif.date)/1000));
-                         el.innerHTML = `
-                             <div class="font-bold text-sm mb-1"><i class="fas fa-exchange-alt text-purple-500"></i> Convite de Troca</div>
-                             <div class="text-xs text-gray-600 mb-2">${notif.fromName} quer negociar!</div>
-                             <div class="text-[10px] text-red-500 font-bold mb-1">Expira em: ${timeLeft}s</div>
-                             <div class="flex gap-2">
-                                <button class="btn bg-green-500 py-1 text-xs mb-0" id="accept-trade-${docSnap.id}">Negociar</button>
-                                <button class="btn bg-red-500 py-1 text-xs mb-0" id="deny-${docSnap.id}">Recusar</button>
-                            </div>
-                        `;
-                    }
-
                     notifList.appendChild(el);
                     
-                    // Event Listeners Dinâmicos (SetTimeout garante que o DOM existe)
+                    // Event Listeners Dinâmicos
                     setTimeout(() => {
                         const denyBtn = document.getElementById(`deny-${docSnap.id}`);
                         if(denyBtn) {
@@ -481,14 +455,6 @@
                                 await deleteDoc(doc(db, "notifications", docSnap.id));
                             };
                         }
-                        
-                        const accTradeBtn = document.getElementById(`accept-trade-${docSnap.id}`);
-                        if(accTradeBtn) {
-                             accTradeBtn.onclick = async () => {
-                                 await deleteDoc(doc(db, "notifications", docSnap.id)); 
-                                 game.startRealtimeTrade(docSnap.id, notif.from, notif.fromName);
-                             };
-                        }
                     }, 50);
                 });
 
@@ -500,20 +466,6 @@
                     badge.classList.add('hidden');
                 }
             });
-        };
-        
-        window.sendTradeInvite = async (friendId) => {
-            if(!auth.currentUser) return;
-            try {
-                await addDoc(collection(db, "notifications"), {
-                    from: auth.currentUser.uid,
-                    fromName: auth.currentUser.displayName,
-                    to: friendId,
-                    type: 'trade_invite',
-                    date: Date.now()
-                });
-                alert("Convite enviado! Aguarde 30s.");
-            } catch(e) { alert("Erro ao enviar."); console.error(e); }
         };
 
         window.syncServerShop = async () => {
@@ -543,7 +495,7 @@
 
     <div id="game-container">
         <canvas id="gameCanvas"></canvas>
-        <div id="versionLabel">v2.1 Fix</div>
+        <div id="versionLabel">v2.5 Mercado & Fix</div>
         
         <div id="muteBtn" class="interactive" onclick="game.toggleMute()">
             <i class="fas fa-volume-up" id="muteIcon"></i>
@@ -598,7 +550,7 @@
                          </button>
                     </div>
                      <div class="absolute top-0 left-0">
-                         <button onclick="game.openUI('codes')" class="relative text-gray-400 hover:text-green-500 text-xl p-2">
+                          <button onclick="game.openUI('codes')" class="relative text-gray-400 hover:text-green-500 text-xl p-2">
                              <i class="fas fa-gift"></i>
                          </button>
                     </div>
@@ -629,9 +581,47 @@
                     </div>
                     <button class="btn bg-indigo-600" onclick="game.openUI('tournaments')"><i class="fas fa-medal mr-1"></i> TORNEIOS</button>
                     <button class="btn bg-teal-500" onclick="game.openUI('news')"><i class="fas fa-newspaper mr-1"></i> NEWS</button>
+                    <button class="btn bg-pink-500" onclick="game.openUI('market')"><i class="fas fa-hand-holding-usd mr-1"></i> MERCADO</button>
                 </div>
                 <button id="logoutBtn" class="hidden text-[10px] bg-red-100 text-red-500 px-3 py-1 rounded-full font-bold mt-2" onclick="authSystem.logout()">SAIR DA CONTA</button>
             </div>
+        </div>
+
+        <div id="marketScreen" class="ui-layer interactive hidden">
+             <div class="card h-[85vh]">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-black text-pink-600"><i class="fas fa-hand-holding-usd"></i> MERCADO</h2>
+                    <button onclick="game.openUI('menu')" class="w-8 h-8 bg-gray-100 rounded-full font-bold">X</button>
+                </div>
+                
+                <div class="flex gap-2 mb-4">
+                    <button class="flex-1 btn bg-pink-500 text-xs py-2 mb-0" onclick="market.showBuy()">COMPRAR</button>
+                    <button class="flex-1 btn bg-gray-500 text-xs py-2 mb-0" onclick="market.showSell()">VENDER</button>
+                </div>
+
+                <div id="marketBuyPanel" class="flex-1 flex flex-col overflow-hidden">
+                    <div id="marketList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar">
+                        <div class="text-center text-gray-400 mt-10">Carregando ofertas...</div>
+                    </div>
+                </div>
+
+                <div id="marketSellPanel" class="flex-1 flex flex-col overflow-hidden hidden">
+                    <div class="bg-gray-100 p-4 rounded-xl mb-4 text-left">
+                         <label class="text-xs font-bold text-gray-500 block mb-1">QUAL GATO VENDER?</label>
+                         <select id="sellCatSelect" class="w-full p-2 rounded mb-3 text-sm font-bold bg-white"></select>
+                         
+                         <label class="text-xs font-bold text-gray-500 block mb-1">QUANTIDADE</label>
+                         <input type="number" id="sellQty" value="1" min="1" class="w-full p-2 rounded mb-3 text-sm font-bold bg-white">
+                         
+                         <label class="text-xs font-bold text-gray-500 block mb-1">PREÇO EM MOEDAS</label>
+                         <input type="number" id="sellPrice" placeholder="Valor" class="w-full p-2 rounded mb-4 text-sm font-bold bg-white">
+                         
+                         <button class="btn bg-green-500 mb-0" onclick="market.createListing()">CRIAR ANÚNCIO (24h)</button>
+                    </div>
+                    <div class="text-[10px] text-gray-400">Você só pode ter 3 anúncios ativos.</div>
+                    <div id="myListings" class="overflow-y-auto flex-1 mt-2 pr-2 custom-scrollbar"></div>
+                </div>
+             </div>
         </div>
 
         <div id="codesScreen" class="ui-layer interactive hidden">
@@ -670,7 +660,7 @@
                     <h2 class="text-2xl font-black text-gray-800">LOJA</h2>
                     <button onclick="game.openUI('menu')" class="w-8 h-8 bg-gray-100 rounded-full font-bold">X</button>
                 </div>
- 
+
                 <div class="bg-yellow-100 text-yellow-800 p-2 rounded-xl mb-4 font-black flex justify-between px-4 items-center">
                     <span class="text-xs opacity-70">SALDO</span> 
                     <span class="text-xl"><i class="fas fa-coins"></i> <span id="shopBalance">0</span></span>
@@ -684,7 +674,7 @@
                         </h3>
                     </div>
                     <div id="dailyShopList" class="flex gap-2 justify-center">
-                        <div class="text-xs text-gray-400">Carregando servidor...</div>
+                         <div class="text-xs text-gray-400">Carregando servidor...</div>
                     </div>
                 </div>
 
@@ -710,34 +700,6 @@
                     <div class="text-gray-400 text-sm text-center mt-10">Você ainda não tem amigos.</div>
                 </div>
             </div>
-        </div>
-        
-        <div id="realtimeTradeScreen" class="ui-layer interactive hidden z-[60]">
-             <div class="card w-full max-w-lg">
-                <h2 class="text-xl font-black text-purple-600 mb-1">NEGOCIAÇÃO</h2>
-                <div class="text-xs text-gray-500 mb-4" id="tradeStatus">Aguardando...</div>
-                
-                <div class="flex justify-between gap-2 mb-4 w-full">
-                    <div class="flex-1 bg-blue-50 p-2 rounded-lg border border-blue-200 flex flex-col items-center">
-                        <div class="font-bold text-xs text-blue-600 mb-1">VOCÊ</div>
-                        <div id="myOfferDisplay" class="w-16 h-16 bg-white rounded border border-gray-300 mb-2 flex items-center justify-center text-xs text-gray-400">Vazio</div>
-                        <select id="tradeMyOfferSelect" class="w-full text-[10px] p-1 mb-2" onchange="game.updateTradeOffer(this.value)">
-                            <option value="">Nada</option>
-                        </select>
-                        <button id="btnLockMe" class="btn bg-gray-400 text-[10px] py-2 mb-0" onclick="game.toggleTradeReady()">PRONTO</button>
-                    </div>
-
-                    <div class="flex-1 bg-red-50 p-2 rounded-lg border border-red-200 flex flex-col items-center">
-                        <div class="font-bold text-xs text-red-600 mb-1" id="otherTraderName">Oponente</div>
-                        <div id="otherOfferDisplay" class="w-16 h-16 bg-white rounded border border-gray-300 mb-2 flex items-center justify-center text-xs text-gray-400">Vazio</div>
-                        <div class="text-[10px] text-gray-500 mt-2 italic">Escolhendo...</div>
-                        <div id="statusOther" class="text-[10px] font-bold text-red-500 mt-1">NÃO PRONTO</div>
-                    </div>
-                </div>
-
-                <button id="btnFinalizeTrade" class="hidden btn bg-green-500 animate-pulse" onclick="game.finalizeTrade()">CONFIRMAR TROCA</button>
-                <button class="btn bg-red-500 mt-2" onclick="game.cancelTrade()">CANCELAR</button>
-             </div>
         </div>
 
         <div id="newsScreen" class="ui-layer interactive hidden">
@@ -775,11 +737,9 @@
                          <div class="p-4 text-center text-gray-400 text-sm">Carregando ranking...</div>
                     </div>
                 </div>
-                
                 <div class="leaderboard-row text-blue-600 bg-blue-50 border-t-2 border-blue-100 p-2 rounded-lg">
                     <span>SEU RECORD</span> <span id="myHighScoreRank">0</span>
                 </div>
-                
                 <button class="btn bg-gray-500 mt-2" onclick="game.openUI('menu')">VOLTAR</button>
             </div>
         </div>
@@ -830,7 +790,6 @@
     const CODIGOS_PROMOCIONAIS = [
         { codigo: "SIXSEVEN", tipo: "moedas", valor: 500 },
     ];
-
     // CONFIGURAÇÃO DE TORNEIOS
     const TOURNAMENT_CONFIG = [
         {
@@ -842,7 +801,6 @@
             premio: '5000' 
         }
     ];
-
     const SONS = {
         musica_menu: 'https://assets.mixkit.co/music/preview/mixkit-games-worldbeat-466.mp3', 
         musica_jogo: '',
@@ -851,236 +809,34 @@
         gameover: 'https://assets.mixkit.co/sfx/preview/mixkit-arcade-retro-game-over-213.wav',
         click: 'https://assets.mixkit.co/sfx/preview/mixkit-modern-technology-select-3124.wav'
     };
-
     // SEUS GATOS ORIGINAIS
     const MEUS_GATOS = [
-        {
-            id: 'g001',
-            nome: 'Dionísio',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/Gemini_Generated_Image_uy5y2puy5y2puy5y%20(1).png', 
-            cor_padrao: '#FF9933',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-        {
-            id: 'g002',
-            nome: 'Gato Emo',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/Gemini_Generated_Image_oi2dkjoi2dkjoi2d%20(2).png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-        {
-            id: 'g003',
-            nome: 'Android Neko',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/WhatsApp%20Image%202026-01-03%20at%2001.36.43.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g004',
-            nome: 'Persa',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163730730.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g005',
-            nome: 'Siamês',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163712740.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g006',
-            nome: 'Sphynx',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163653076.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g007',
-            nome: 'Gato Laranjinha',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/gato-laranja-filhote.webp', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g008',
-            nome: 'Chocolate',
-            raridade: 'comum',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/37lea95r4h161%20(1).webp', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g009',
-            nome: 'Stray',
-            raridade: 'raro',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/stray-review_7wxr.jpg', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g010',
-            nome: 'Gato de Botas',
-            raridade: 'epico',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/AAT001-P001-89335-1-m-Divulgacao_1.jpg', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g011',
-            nome: 'Tom',
-            raridade: 'epico',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163603209.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g012',
-            nome: 'Garfield',
-            raridade: 'raro',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/images.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: true
-        },
-	{
-            id: 'g013',
-            nome: 'Gato Makonha',
-            raridade: 'mitico',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163513345.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
-	{
-            id: 'g014',
-            nome: 'Gato Confuso',
-            raridade: 'legendario',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163836118.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
-	{
-            id: 'g015',
-            nome: 'Skinwalker',
-            raridade: 'secreta',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163924483.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 1,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
-	{
-            id: 'g016',
-            nome: 'Bianca',
-            raridade: 'secreta',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_175752638.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 2,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
-	{
-            id: 'g017',
-            nome: 'Gato em pé',
-            raridade: 'legendario',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180044488.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 3,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
-	{
-            id: 'g018',
-            nome: 'gato de schrödinger morto',
-            raridade: 'secreta',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180259424.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 5,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
-	{
-            id: 'g019',
-            nome: 'gato de schrödinger vivo',
-            raridade: 'secreta',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180327109.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 5,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
-	{
-            id: 'g020',
-            nome: 'victor xavier',
-            raridade: '',
-            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180439637.png', 
-            cor_padrao: '#FF9923',
-            multiplicador: 10,
-            efeito: 'nenhum',
-            escala_imagem: 1.3,
-            aparecer_na_loja: false
-        },
+        { id: 'g001', nome: 'Dionísio', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/Gemini_Generated_Image_uy5y2puy5y2puy5y%20(1).png', cor_padrao: '#FF9933', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+        { id: 'g002', nome: 'Gato Emo', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/Gemini_Generated_Image_oi2dkjoi2dkjoi2d%20(2).png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+        { id: 'g003', nome: 'Android Neko', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/WhatsApp%20Image%202026-01-03%20at%2001.36.43.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g004', nome: 'Persa', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163730730.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g005', nome: 'Siamês', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163712740.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g006', nome: 'Sphynx', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163653076.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g007', nome: 'Gato Laranjinha', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/gato-laranja-filhote.webp', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g008', nome: 'Chocolate', raridade: 'comum', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/37lea95r4h161%20(1).webp', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g009', nome: 'Stray', raridade: 'raro', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/stray-review_7wxr.jpg', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g010', nome: 'Gato de Botas', raridade: 'epico', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/AAT001-P001-89335-1-m-Divulgacao_1.jpg', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g011', nome: 'Tom', raridade: 'epico', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163603209.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g012', nome: 'Garfield', raridade: 'raro', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/images.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: true },
+	{ id: 'g013', nome: 'Gato Makonha', raridade: 'mitico', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163513345.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+	{ id: 'g014', nome: 'Gato Confuso', raridade: 'legendario', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163836118.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+	{ id: 'g015', nome: 'Skinwalker', raridade: 'secreta', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_163924483.png', cor_padrao: '#FF9923', multiplicador: 1, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+	{ id: 'g016', nome: 'Bianca', raridade: 'secreta', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_175752638.png', cor_padrao: '#FF9923', multiplicador: 2, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+	{ id: 'g017', nome: 'Gato em pé', raridade: 'legendario', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180044488.png', cor_padrao: '#FF9923', multiplicador: 3, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+	{ id: 'g018', nome: 'gato de schrödinger morto', raridade: 'secreta', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180259424.png', cor_padrao: '#FF9923', multiplicador: 5, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+	{ id: 'g019', nome: 'gato de schrödinger vivo', raridade: 'secreta', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180327109.png', cor_padrao: '#FF9923', multiplicador: 5, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+	{ id: 'g020', nome: 'victor xavier', raridade: '', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180439637.png', cor_padrao: '#FF9923', multiplicador: 10, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
     ];
     window.GAME_CATS = MEUS_GATOS;
     
     const NOTICIAS = [
-        { data: "03/01/2026", titulo: "CORREÇÃO DE BUGS", texto: "Canos agora são mais justos e sistema de amigos foi consertado!" },
-        { data: "03/01/2026", titulo: "V2.0 - TORNEIOS", texto: "Participe de torneios clicando no botão 'Participar'!" },
-        { data: "03/01/2026", titulo: "SISTEMA DE AMIGOS!", texto: "Adicione amigos pelo Ranking ou pesquisando o nome." }
+        { data: "03/01/2026", titulo: "MERCADO ABERTO!", texto: "Venda seus gatos repetidos por moedas!" },
+        { data: "03/01/2026", titulo: "BUGS CORRIGIDOS", texto: "Canos espaçados e lista de amigos consertada." }
     ];
     
     // PREÇOS
@@ -1128,7 +884,6 @@
     // ⚙️ SISTEMA DE SAVE
     // =========================================================================
     const SAVE_KEY = 'gb_custom_v6';
-    // State agora inclui joinedTournaments
     let state = { 
         coins: 0, 
         unlocked: ['g001'], 
@@ -1138,7 +893,7 @@
         friends: [],
         tournaments: {},
         redeemedCodes: [],
-        joinedTournaments: [] // Lista de IDs de torneios que entrei
+        joinedTournaments: [] 
     };
     window.gameGetState = () => state;
     window.gameSetState = (newData) => {
@@ -1233,7 +988,6 @@
             btn.className = `text-[9px] px-2 py-1 rounded mt-1 text-white font-bold ${owned ? 'bg-green-500' : 'bg-blue-500'}`;
             btn.innerText = owned ? `TEM (x${state.counts[id]||1})` : `${price} 💰`;
             btn.onclick = () => {
-                // Math.floor para garantir
                 if(Math.floor(state.coins) >= price) {
                     state.coins -= price;
                     if(!state.unlocked.includes(id)) state.unlocked.push(id);
@@ -1265,6 +1019,7 @@
             }
         }
     }, 1000);
+
     function drawCat(ctx, cat, x, y, size, frame) {
         ctx.save();
         ctx.translate(x, y);
@@ -1364,23 +1119,21 @@
     const pipes = {
         list: [],
         update: function() {
-            let diffMult = 1 + (score * 0.05); 
+            let diffMult = 1 + (score * 0.05);
             if(diffMult > 2.5) diffMult = 2.5; 
             let currentSpeed = speed * diffMult;
-
-            // --- CORREÇÃO DOS CANOS: SPAWN POR DISTÂNCIA ---
-            // Só cria cano se não tiver nenhum OU se o último estiver longe
-            if (this.list.length === 0 || canvas.width - this.list[this.list.length-1].x >= 220) {
-                let gap = 170; // Abertura fixa grande
-                let padding = 80; // Margem segura do topo e chão
+            
+            // --- CORREÇÃO DOS CANOS: DISTÂNCIA MAIOR ---
+            // Aumentado para 320 de distância horizontal
+            if (this.list.length === 0 || canvas.width - this.list[this.list.length-1].x >= 320) {
+                // Abertura maior (190)
+                let gap = 190;
+                let padding = 80;
                 
-                // Calcula limite matemático
                 let minPipe = padding;
                 let maxPipe = canvas.height - padding - gap;
                 
-                // Gera altura aleatória dentro dos limites seguros
                 let y = Math.floor(Math.random() * (maxPipe - minPipe + 1)) + minPipe;
-                
                 this.list.push({x: canvas.width, y, gap, scored: false});
             }
 
@@ -1425,8 +1178,7 @@
     function loop() {
         ctx.clearRect(0,0,canvas.width,canvas.height);
         drawBackground();
-        if(playing) { bird.update();
-            pipes.update(); frames++; }
+        if(playing) { bird.update(); pipes.update(); frames++; }
         pipes.draw();
         bird.draw();
         if(!playing && !document.getElementById('menuScreen').classList.contains('hidden')) {
@@ -1449,8 +1201,6 @@
         playing = false;
         audioCtx.play('gameover');
         if(score > state.highScore) state.highScore = score;
-        
-        // Lógica de Torneio (SÓ PONTUA SE TIVER JOINED)
         if(activeTournament && state.joinedTournaments.includes(activeTournament)) {
             const tData = state.tournaments[activeTournament] || { roundsPlayed: 0, totalScore: 0, bestScore: 0 };
             tData.roundsPlayed++;
@@ -1472,20 +1222,14 @@
         document.getElementById('hud').classList.add('hidden');
     }
 
-    let activeTradeUnsub = null;
-    let currentTradeId = null;
-
     window.game = {
         startGame: () => {
-            // Verifica Torneio
             const now = Date.now();
             const validTournament = TOURNAMENT_CONFIG.find(t => now >= t.inicio && now <= t.fim);
             
             activeTournament = null;
             document.getElementById('tournamentHud').classList.add('hidden');
-
             if(validTournament) {
-                // Checa se usuário entrou no torneio
                 if(state.joinedTournaments.includes(validTournament.id)) {
                     if(!state.tournaments) state.tournaments = {};
                     const tData = state.tournaments[validTournament.id] || { roundsPlayed: 0 };
@@ -1526,12 +1270,9 @@
                  document.getElementById('myHighScoreRank').innerText = state.highScore;
                  if(window.loadFirebaseLeaderboard) window.loadFirebaseLeaderboard();
             }
-            if(name === 'friends') {
-                renderFriends();
-            }
-            if(name === 'tournaments') {
-                renderTournaments();
-            }
+            if(name === 'friends') { renderFriends(); }
+            if(name === 'tournaments') { renderTournaments(); }
+            if(name === 'market') { window.market.load(); }
         },
         buyBox: (tier, cost) => {
             audioCtx.play('click');
@@ -1572,13 +1313,32 @@
                 drawCat(gCtx, win, 60, 60, 90, 0);
             }, 1000);
         },
-        acceptFriend: (uid, name) => {
+        acceptFriend: async (uid, name) => {
+            // 1. Atualiza Localmente
             if(!state.friends) state.friends = [];
-            if(state.friends.some(f => f.uid === uid)) {
-                return;
-            }
+            if(state.friends.some(f => f.uid === uid)) return;
             state.friends.push({uid: uid, name: name});
             save();
+
+            // 2. Atualiza no Banco do OUTRO usuário (para aparecer pra ele)
+            try {
+                const { doc, getDoc, updateDoc } = window.firebaseDb;
+                const otherUserRef = doc(window.firebaseDb, "users", uid);
+                const snap = await getDoc(otherUserRef);
+                
+                if(snap.exists()) {
+                    const data = snap.data();
+                    let otherFriends = data.friends || [];
+                    const myUid = window.authSystem.user.uid;
+                    const myName = window.authSystem.user.displayName;
+                    
+                    if(!otherFriends.some(f => f.uid === myUid)) {
+                        otherFriends.push({uid: myUid, name: myName});
+                        await updateDoc(otherUserRef, { friends: otherFriends });
+                    }
+                }
+            } catch(e) { console.error("Erro ao atualizar amigo remoto:", e); }
+
             alert(`${name} agora é seu amigo!`);
         },
         
@@ -1589,7 +1349,6 @@
              const msg = CODIGOS_PROMOCIONAIS.find(c => c.codigo === code);
              
              if(state.redeemedCodes.includes(code)) return alert("Código já resgatado!");
-             
              if(msg) {
                  if(msg.tipo === 'moedas') {
                      state.coins += msg.valor;
@@ -1625,143 +1384,189 @@
                  save();
                  renderTournaments();
             }
-        },
-
-        // --- REAL TIME TRADE ---
-        startRealtimeTrade: async (sessionId, otherUid, otherName) => {
-            const { doc, setDoc, onSnapshot, deleteDoc, updateDoc } = window.firebaseDb;
-            
-            const sessionRef = doc(window.firebaseDb, "active_trades", sessionId);
-            
-            await setDoc(sessionRef, {
-                p1: window.authSystem.user.uid,
-                p2: otherUid,
-                p1Name: window.authSystem.user.displayName,
-                p2Name: otherName,
-                offer1: null,
-                offer2: null,
-                ready1: false,
-                ready2: false,
-                finished: false
-            }, { merge: true });
-
-            currentTradeId = sessionId;
-            document.getElementById('realtimeTradeScreen').classList.remove('hidden');
-            document.getElementById('otherTraderName').innerText = otherName;
-            
-            // Preenche select
-            const mySelect = document.getElementById('tradeMyOfferSelect');
-            mySelect.innerHTML = '<option value="">Nada</option>';
-            state.unlocked.forEach(catId => {
-                 const cat = MEUS_GATOS.find(c => c.id === catId);
-                 const count = state.counts[catId] || 0;
-                 if(count > 0) {
-                     const opt = document.createElement('option');
-                     opt.value = catId;
-                     opt.text = `${cat.nome} (x${count})`;
-                     mySelect.appendChild(opt);
-                 }
-            });
-
-            // Listener
-            activeTradeUnsub = onSnapshot(sessionRef, (snap) => {
-                if(!snap.exists()) {
-                    game.cancelTrade(false);
-                    return;
-                }
-                const data = snap.data();
-                const isP1 = window.authSystem.user.uid === data.p1;
-                
-                // Offers
-                const myOffer = isP1 ? data.offer1 : data.offer2;
-                const otherOffer = isP1 ? data.offer2 : data.offer1;
-                const myReady = isP1 ? data.ready1 : data.ready2;
-                const otherReady = isP1 ? data.ready2 : data.ready1;
-
-                // UI Update
-                document.getElementById('myOfferDisplay').innerText = myOffer ? MEUS_GATOS.find(c=>c.id===myOffer).nome : "Nada";
-                document.getElementById('otherOfferDisplay').innerText = otherOffer ? MEUS_GATOS.find(c=>c.id===otherOffer).nome : "Nada";
-                
-                document.getElementById('statusOther').innerText = otherReady ? "PRONTO" : "NÃO PRONTO";
-                document.getElementById('statusOther').className = otherReady ? "text-[10px] font-bold text-green-500 mt-1" : "text-[10px] font-bold text-red-500 mt-1";
-                
-                document.getElementById('btnLockMe').innerText = myReady ? "CANCELAR PRONTO" : "PRONTO";
-                document.getElementById('tradeMyOfferSelect').disabled = myReady;
-
-                if(myReady && otherReady) {
-                    document.getElementById('btnFinalizeTrade').classList.remove('hidden');
-                    document.getElementById('tradeStatus').innerText = "Ambos prontos! Confirme para trocar.";
-                } else {
-                    document.getElementById('btnFinalizeTrade').classList.add('hidden');
-                    document.getElementById('tradeStatus').innerText = "Negociando...";
-                }
-            });
-        },
-        updateTradeOffer: async (val) => {
-            if(!currentTradeId) return;
-            const { doc, updateDoc, getDoc } = window.firebaseDb;
-            const sessionRef = doc(window.firebaseDb, "active_trades", currentTradeId);
-            const snap = await getDoc(sessionRef);
-            if(snap.exists()) {
-                const data = snap.data();
-                const isP1 = window.authSystem.user.uid === data.p1;
-                if(isP1) await updateDoc(sessionRef, { offer1: val || null, ready1: false, ready2: false });
-                else await updateDoc(sessionRef, { offer2: val || null, ready1: false, ready2: false });
-            }
-        },
-        toggleTradeReady: async () => {
-             if(!currentTradeId) return;
-             const { doc, updateDoc, getDoc } = window.firebaseDb;
-             const sessionRef = doc(window.firebaseDb, "active_trades", currentTradeId);
-             const snap = await getDoc(sessionRef);
-             if(snap.exists()) {
-                const data = snap.data();
-                const isP1 = window.authSystem.user.uid === data.p1;
-                if(isP1) await updateDoc(sessionRef, { ready1: !data.ready1 });
-                else await updateDoc(sessionRef, { ready2: !data.ready2 });
-             }
-        },
-        finalizeTrade: async () => {
-             const { doc, getDoc, deleteDoc } = window.firebaseDb;
-             const sessionRef = doc(window.firebaseDb, "active_trades", currentTradeId);
-             const snap = await getDoc(sessionRef);
-             if(snap.exists()) {
-                 const data = snap.data();
-                 const isP1 = window.authSystem.user.uid === data.p1;
-                 
-                 const myItem = isP1 ? data.offer1 : data.offer2;
-                 const getItem = isP1 ? data.offer2 : data.offer1;
-                 
-                 // Remove meu item
-                 if(myItem) {
-                     state.counts[myItem]--;
-                     if(state.counts[myItem] <= 0) {
-                         state.unlocked = state.unlocked.filter(i => i !== myItem);
-                         if(state.equipped === myItem) state.equipped = 'g001';
-                     }
-                 }
-                 // Adiciona item
-                 if(getItem) {
-                     if(!state.unlocked.includes(getItem)) state.unlocked.push(getItem);
-                     state.counts[getItem] = (state.counts[getItem] || 0) + 1;
-                 }
-                 
-                 save();
-                 alert("Troca realizada!");
-                 await deleteDoc(sessionRef); 
-             }
-        },
-        cancelTrade: async (deleteSession = true) => {
-            if(activeTradeUnsub) activeTradeUnsub();
-            if(deleteSession && currentTradeId) {
-                const { doc, deleteDoc } = window.firebaseDb;
-                await deleteDoc(doc(window.firebaseDb, "active_trades", currentTradeId)).catch(e=>{});
-            }
-            document.getElementById('realtimeTradeScreen').classList.add('hidden');
-            currentTradeId = null;
         }
     };
     
+    // --- MERCADO SYSTEM ---
+    window.market = {
+        showBuy: () => {
+            document.getElementById('marketBuyPanel').classList.remove('hidden');
+            document.getElementById('marketSellPanel').classList.add('hidden');
+            window.market.load();
+        },
+        showSell: () => {
+            document.getElementById('marketBuyPanel').classList.add('hidden');
+            document.getElementById('marketSellPanel').classList.remove('hidden');
+            
+            // Popula Select
+            const select = document.getElementById('sellCatSelect');
+            select.innerHTML = '';
+            let totalCats = 0;
+            state.unlocked.forEach(id => {
+                totalCats += (state.counts[id] || 0);
+                if((state.counts[id] || 0) > 0) {
+                    const cat = MEUS_GATOS.find(c => c.id === id);
+                    const opt = document.createElement('option');
+                    opt.value = id;
+                    opt.text = `${cat.nome} (Você tem: ${state.counts[id]})`;
+                    select.appendChild(opt);
+                }
+            });
+
+            if(totalCats <= 1) {
+                alert("Você precisa ter mais de 1 gato no total para vender!");
+                window.market.showBuy();
+            }
+            window.market.loadMyListings();
+        },
+        createListing: async () => {
+            const catId = document.getElementById('sellCatSelect').value;
+            const qty = parseInt(document.getElementById('sellQty').value);
+            const price = parseInt(document.getElementById('sellPrice').value);
+            
+            if(!catId || qty < 1 || price < 1) return alert("Preencha tudo corretamente.");
+            if((state.counts[catId] || 0) < qty) return alert("Você não tem essa quantidade!");
+            
+            // Verifica Limite de 3
+            const { collection, query, where, getDocs, addDoc } = window.firebaseDb;
+            const q = query(collection(window.firebaseDb, "market_listings"), where("sellerId", "==", window.authSystem.user.uid));
+            const snap = await getDocs(q);
+            if(snap.size >= 3) return alert("Limite de 3 anúncios atingido!");
+            
+            // Deduz
+            state.counts[catId] -= qty;
+            if(state.counts[catId] <= 0) {
+                state.unlocked = state.unlocked.filter(i => i !== catId);
+                if(state.equipped === catId) state.equipped = 'g001';
+            }
+            save();
+
+            // Envia
+            try {
+                await addDoc(collection(window.firebaseDb, "market_listings"), {
+                    sellerId: window.authSystem.user.uid,
+                    sellerName: window.authSystem.user.displayName,
+                    catId: catId,
+                    qty: qty,
+                    price: price,
+                    expires: Date.now() + 86400000 // 24h
+                });
+                alert("Anúncio criado!");
+                window.market.showSell();
+            } catch(e) {
+                console.error(e);
+                alert("Erro ao criar anúncio.");
+            }
+        },
+        buy: async (listingId, price, catId, qty) => {
+            if(state.coins < price) return alert("Moedas insuficientes!");
+            
+            const { doc, runTransaction } = window.firebaseDb;
+            const listRef = doc(window.firebaseDb, "market_listings", listingId);
+            
+            try {
+                await runTransaction(window.firebaseDb, async (transaction) => {
+                    const sfDoc = await transaction.get(listRef);
+                    if (!sfDoc.exists()) throw "Anúncio não existe mais.";
+                    
+                    // Add items to buyer
+                    state.coins -= price;
+                    if(!state.unlocked.includes(catId)) state.unlocked.push(catId);
+                    state.counts[catId] = (state.counts[catId] || 0) + qty;
+                    save();
+
+                    // Pay Seller (Update User Doc directly)
+                    const sellerId = sfDoc.data().sellerId;
+                    const sellerRef = doc(window.firebaseDb, "users", sellerId);
+                    const sellerSnap = await transaction.get(sellerRef);
+                    if(sellerSnap.exists()) {
+                        const sData = sellerSnap.data();
+                        const newCoins = (sData.coins || 0) + price;
+                        transaction.update(sellerRef, { coins: newCoins });
+                    }
+
+                    transaction.delete(listRef);
+                });
+                alert("Compra realizada com sucesso!");
+                window.market.load();
+                document.getElementById('shopBalance').innerText = Math.floor(state.coins);
+            } catch (e) {
+                console.error(e);
+                alert("Erro na transação: " + e);
+            }
+        },
+        load: async () => {
+            const list = document.getElementById('marketList');
+            list.innerHTML = '<div class="text-center text-gray-400 mt-10"><i class="fas fa-spinner fa-spin"></i> Carregando...</div>';
+            
+            const { collection, query, orderBy, limit, getDocs, where } = window.firebaseDb;
+            const now = Date.now();
+            // Pega tudo e filtra no cliente por expiração (simples)
+            const q = query(collection(window.firebaseDb, "market_listings"), orderBy("expires", "desc"), limit(50));
+            const snap = await getDocs(q);
+            
+            list.innerHTML = '';
+            if(snap.empty) {
+                list.innerHTML = '<div class="text-center text-gray-400 mt-10">Nenhuma oferta no momento.</div>';
+                return;
+            }
+            
+            snap.forEach(d => {
+                const data = d.data();
+                if(data.expires < now) return; // Expirado
+                if(data.sellerId === window.authSystem.user.uid) return; // Não mostrar meus próprios aqui
+
+                const cat = MEUS_GATOS.find(c => c.id === data.catId);
+                const el = document.createElement('div');
+                el.className = 'market-item';
+                el.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <div class="w-10 h-10 bg-gray-100 rounded border border-gray-300 overflow-hidden">
+                             <img src="${cat.imagem}" class="w-full h-full object-cover">
+                        </div>
+                        <div class="text-left">
+                            <div class="font-bold text-sm text-gray-700">${cat.nome} <span class="text-xs text-gray-500">x${data.qty}</span></div>
+                            <div class="text-[10px] text-gray-400">Vendedor: ${data.sellerName}</div>
+                        </div>
+                    </div>
+                    <button class="btn bg-green-500 py-2 px-4 text-xs w-auto mb-0" onclick="market.buy('${d.id}', ${data.price}, '${data.catId}', ${data.qty})">
+                        ${data.price} 💰
+                    </button>
+                `;
+                list.appendChild(el);
+            });
+        },
+        loadMyListings: async () => {
+            const list = document.getElementById('myListings');
+            list.innerHTML = '...';
+            const { collection, query, where, getDocs, deleteDoc, doc } = window.firebaseDb;
+            const q = query(collection(window.firebaseDb, "market_listings"), where("sellerId", "==", window.authSystem.user.uid));
+            const snap = await getDocs(q);
+            
+            list.innerHTML = '';
+            snap.forEach(d => {
+                const data = d.data();
+                const cat = MEUS_GATOS.find(c => c.id === data.catId);
+                const el = document.createElement('div');
+                el.className = 'market-item bg-pink-50 border-pink-200';
+                el.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <div class="font-bold text-sm text-gray-700">${cat.nome} x${data.qty}</div>
+                        <div class="font-bold text-sm text-yellow-600">${data.price} 💰</div>
+                    </div>
+                    <button class="btn bg-red-500 py-1 px-3 text-[10px] w-auto mb-0" id="del-${d.id}">X</button>
+                `;
+                list.appendChild(el);
+                document.getElementById(`del-${d.id}`).onclick = async () => {
+                    if(confirm("Cancelar anúncio? Os itens serão perdidos (regras do mercado).")) {
+                        await deleteDoc(doc(window.firebaseDb, "market_listings", d.id));
+                        window.market.showSell();
+                    }
+                }
+            });
+        }
+    };
+
     function renderFriends() {
         const list = document.getElementById('friendsList');
         list.innerHTML = '';
@@ -1771,7 +1576,6 @@
         }
         
         const { doc, getDoc } = window.firebaseDb;
-        
         state.friends.forEach(async (f) => {
             const div = document.createElement('div');
             div.className = 'friend-row';
@@ -1790,7 +1594,6 @@
                     <span class="${isOnline ? 'online-dot' : 'offline-dot'}"></span>
                     <span><i class="fas fa-user text-cyan-500 mr-2"></i> ${f.name}</span>
                 </div>
-                <button class="btn bg-purple-500 text-[10px] py-1 px-3 w-auto mb-0" onclick="window.sendTradeInvite('${f.uid}')">NEGOCIAR</button>
             `;
             list.appendChild(div);
         });
