@@ -173,12 +173,20 @@
             font-weight: bold;
             z-index: 5;
         }
+
+        .online-dot {
+            width: 8px; height: 8px; background-color: #22c55e; border-radius: 50%; display: inline-block; margin-right: 5px;
+            box-shadow: 0 0 5px #22c55e;
+        }
+        .offline-dot {
+            width: 8px; height: 8px; background-color: #9ca3af; border-radius: 50%; display: inline-block; margin-right: 5px;
+        }
     </style>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, addDoc, deleteDoc, collection, query, orderBy, limit, getDocs, where, runTransaction, updateDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, addDoc, deleteDoc, collection, query, orderBy, limit, getDocs, where, runTransaction, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
         
         const firebaseConfig = {
             apiKey: "AIzaSyAh1Xzb616gPPnnmrjTJSGKp1zwosuVO7w",
@@ -193,6 +201,13 @@
         const db = getFirestore(app);
         window.firebaseDb = db;
         window.firebaseAuth = auth;
+
+        // Atualizador de Presença
+        setInterval(() => {
+            if(auth.currentUser) {
+                updateDoc(doc(db, "users", auth.currentUser.uid), { lastActive: Date.now() }).catch(()=>{});
+            }
+        }, 60000); // A cada 1 minuto
 
         window.authSystem = {
             user: null,
@@ -233,7 +248,7 @@
                     
                     const user = auth.currentUser;
                     await updateProfile(user, { displayName: name });
-                    await setDoc(doc(db, "users", user.uid), { displayName: name }, { merge: true });
+                    await setDoc(doc(db, "users", user.uid), { displayName: name, lastActive: Date.now() }, { merge: true });
                     
                     document.getElementById('nameSetupScreen').classList.add('hidden');
                     window.location.reload();
@@ -280,8 +295,8 @@
                     window.authSystem.saveData(window.gameGetState());
                 }
                 
-                // Carregar Notificações
-                if(window.loadNotifications) window.loadNotifications();
+                // INICIAR ESCUTA DE NOTIFICAÇÕES EM TEMPO REAL
+                window.startNotificationListener();
 
                 document.getElementById('loginScreen').classList.add('hidden');
             }
@@ -375,27 +390,28 @@
             }
         };
 
-        // NOTIFICAÇÕES
-        window.loadNotifications = async () => {
+        // NOTIFICAÇÕES EM TEMPO REAL
+        window.startNotificationListener = () => {
             if(!auth.currentUser) return;
             const notifList = document.getElementById('notifList');
+            // Query para minhas notificações
             const q = query(collection(db, "notifications"), where("to", "==", auth.currentUser.uid));
             
-            const render = async () => {
-                const snap = await getDocs(q);
+            // onSnapshot para real-time
+            onSnapshot(q, (snapshot) => {
                 notifList.innerHTML = '';
-                const count = snap.size;
-                const badge = document.getElementById('notifBadge');
-                if(count > 0) {
-                    badge.classList.remove('hidden');
-                    badge.innerText = count;
-                } else {
-                    badge.classList.add('hidden');
-                    notifList.innerHTML = '<div class="text-gray-400 text-sm text-center">Sem notificações.</div>';
-                }
-
-                snap.forEach(docSnap => {
+                let validCount = 0;
+                const now = Date.now();
+                
+                snapshot.forEach(docSnap => {
                     const notif = docSnap.data();
+                    // Filtra notificações de trade expiradas (30s)
+                    if(notif.type === 'trade_invite' && (now - notif.date > 30000)) {
+                         deleteDoc(doc(db, "notifications", docSnap.id)); // Limpa antiga
+                         return;
+                    }
+
+                    validCount++;
                     const el = document.createElement('div');
                     el.className = 'notif-item';
                     
@@ -410,16 +426,15 @@
                         `;
                     }
                     
-                    if(notif.type === 'trade_request') {
-                        el.innerHTML = `
-                             <div class="font-bold text-sm mb-1"><i class="fas fa-exchange-alt text-purple-500"></i> Proposta de Troca</div>
-                             <div class="text-xs text-gray-600 mb-2">${notif.fromName} quer trocar gatos.</div>
-                             <div class="text-xs bg-gray-100 p-1 rounded mb-2">
-                                <b>Recebe:</b> ${notif.offerCatName}<br>
-                                <b>Entrega:</b> ${notif.wantCatName}
-                             </div>
+                    if(notif.type === 'trade_invite') {
+                         // Barra de tempo visual
+                         const timeLeft = Math.max(0, 30 - Math.floor((now - notif.date)/1000));
+                         el.innerHTML = `
+                             <div class="font-bold text-sm mb-1"><i class="fas fa-exchange-alt text-purple-500"></i> Convite de Troca</div>
+                             <div class="text-xs text-gray-600 mb-2">${notif.fromName} quer negociar!</div>
+                             <div class="text-[10px] text-red-500 font-bold mb-1">Expira em: ${timeLeft}s</div>
                              <div class="flex gap-2">
-                                <button class="btn bg-green-500 py-1 text-xs mb-0" id="accept-trade-${docSnap.id}">Aceitar</button>
+                                <button class="btn bg-green-500 py-1 text-xs mb-0" id="accept-trade-${docSnap.id}">Negociar</button>
                                 <button class="btn bg-red-500 py-1 text-xs mb-0" id="deny-${docSnap.id}">Recusar</button>
                             </div>
                         `;
@@ -428,55 +443,54 @@
                     notifList.appendChild(el);
                     
                     // Event Listeners
-                    if(document.getElementById(`deny-${docSnap.id}`)) {
-                        document.getElementById(`deny-${docSnap.id}`).onclick = async () => {
-                            await deleteDoc(doc(db, "notifications", docSnap.id));
-                            render();
-                        };
-                    }
-                    
-                    if(document.getElementById(`accept-${docSnap.id}`)) {
-                        document.getElementById(`accept-${docSnap.id}`).onclick = async () => {
-                            // Aceitar Amigo
-                            await game.acceptFriend(notif.from, notif.fromName);
-                            await deleteDoc(doc(db, "notifications", docSnap.id));
-                            render();
-                        };
-                    }
-
-                    if(document.getElementById(`accept-trade-${docSnap.id}`)) {
-                         document.getElementById(`accept-trade-${docSnap.id}`).onclick = async () => {
-                             await game.executeTrade(docSnap.id, notif);
-                             render();
-                         };
-                    }
+                    setTimeout(() => {
+                        if(document.getElementById(`deny-${docSnap.id}`)) {
+                            document.getElementById(`deny-${docSnap.id}`).onclick = async () => {
+                                await deleteDoc(doc(db, "notifications", docSnap.id));
+                            };
+                        }
+                        if(document.getElementById(`accept-${docSnap.id}`)) {
+                            document.getElementById(`accept-${docSnap.id}`).onclick = async () => {
+                                await game.acceptFriend(notif.from, notif.fromName);
+                                await deleteDoc(doc(db, "notifications", docSnap.id));
+                            };
+                        }
+                        if(document.getElementById(`accept-trade-${docSnap.id}`)) {
+                             document.getElementById(`accept-trade-${docSnap.id}`).onclick = async () => {
+                                 await deleteDoc(doc(db, "notifications", docSnap.id)); // Remove notif
+                                 game.startRealtimeTrade(docSnap.id, notif.from, notif.fromName); // Inicia sessão com ID baseado na notif
+                             };
+                        }
+                    }, 0);
                 });
-            };
-            
-            // Intervalo simples para atualizar (poll)
-            setInterval(render, 15000); // Checa a cada 15s
-            render();
-            window.refreshNotifs = render;
+
+                const badge = document.getElementById('notifBadge');
+                if(validCount > 0) {
+                    badge.classList.remove('hidden');
+                    badge.innerText = validCount;
+                } else {
+                    badge.classList.add('hidden');
+                    notifList.innerHTML = '<div class="text-gray-400 text-sm text-center">Sem notificações novas.</div>';
+                }
+            });
         };
         
-        // SISTEMA DE TROCA SEGURO
-        window.sendTrade = async (friendId, offerCatId, wantCatId, offerName, wantName) => {
+        // --- SISTEMA DE TRADE REAL-TIME ---
+        window.sendTradeInvite = async (friendId) => {
             if(!auth.currentUser) return;
             try {
                 await addDoc(collection(db, "notifications"), {
                     from: auth.currentUser.uid,
                     fromName: auth.currentUser.displayName,
                     to: friendId,
-                    type: 'trade_request',
-                    offerCatId: offerCatId,
-                    offerCatName: offerName,
-                    wantCatId: wantCatId,
-                    wantCatName: wantName,
+                    type: 'trade_invite',
                     date: Date.now()
                 });
-                alert("Proposta enviada!");
-                document.getElementById('tradeScreen').classList.add('hidden');
-            } catch(e) { alert("Erro ao enviar proposta."); console.error(e); }
+                alert("Convite enviado! Aguarde 30s.");
+                // O criador também monitora um documento de sessão, mas vamos simplificar:
+                // Quando o amigo aceitar, ele cria o doc de sessão e ambos entram.
+                // Na vdd, melhor criar a sessão agora e esperar.
+            } catch(e) { alert("Erro ao enviar."); console.error(e); }
         };
 
         window.syncServerShop = async () => {
@@ -560,6 +574,11 @@
                              <span id="notifBadge" class="hidden absolute top-0 right-0 bg-red-500 text-white text-[8px] font-bold px-1 rounded-full">0</span>
                          </button>
                     </div>
+                     <div class="absolute top-0 left-0">
+                         <button onclick="game.openUI('codes')" class="relative text-gray-400 hover:text-green-500 text-xl p-2">
+                             <i class="fas fa-gift"></i>
+                         </button>
+                    </div>
                 </div>
                 
                 <div class="bg-blue-50 rounded-3xl p-6 border-4 border-white shadow-inner mb-4 flex flex-col items-center relative">
@@ -592,6 +611,16 @@
             </div>
         </div>
 
+        <div id="codesScreen" class="ui-layer interactive hidden">
+             <div class="card">
+                <h2 class="text-2xl font-black text-green-600 mb-2"><i class="fas fa-gift"></i> RESGATAR</h2>
+                <p class="text-xs text-gray-500 mb-4">Insira um código promocional para ganhar recompensas.</p>
+                <input type="text" id="codeInput" placeholder="CÓDIGO" class="w-full bg-gray-100 p-3 rounded-xl mb-4 font-bold text-center uppercase">
+                <button class="btn bg-green-500" onclick="game.redeemCode()">RESGATAR</button>
+                <button class="btn bg-gray-500" onclick="game.openUI('menu')">VOLTAR</button>
+             </div>
+        </div>
+
         <div id="notificationsScreen" class="ui-layer interactive hidden">
             <div class="card h-[70vh]">
                 <div class="flex justify-between items-center mb-4">
@@ -599,7 +628,6 @@
                     <button onclick="game.openUI('menu')" class="w-8 h-8 bg-gray-100 rounded-full font-bold">X</button>
                 </div>
                 <div id="notifList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar"></div>
-                <button class="btn bg-gray-500 mt-2" onclick="if(window.refreshNotifs) window.refreshNotifs()"><i class="fas fa-sync"></i> ATUALIZAR</button>
             </div>
         </div>
         
@@ -662,26 +690,31 @@
             </div>
         </div>
         
-        <div id="tradeScreen" class="ui-layer interactive hidden">
-             <div class="card">
-                <h2 class="text-2xl font-black text-purple-600 mb-2">TROCAR</h2>
-                <p class="text-xs text-gray-500 mb-4">Selecione o gato para dar e o ID do gato que quer receber.</p>
+        <div id="realtimeTradeScreen" class="ui-layer interactive hidden z-[60]">
+             <div class="card w-full max-w-lg">
+                <h2 class="text-xl font-black text-purple-600 mb-1">NEGOCIAÇÃO</h2>
+                <div class="text-xs text-gray-500 mb-4" id="tradeStatus">Aguardando...</div>
                 
-                <input type="hidden" id="tradeFriendId">
-                <div class="mb-2 text-left">
-                    <label class="text-xs font-bold">O QUE VOCÊ DÁ:</label>
-                    <select id="tradeMyCat" class="w-full bg-gray-100 p-2 rounded font-bold text-xs"></select>
+                <div class="flex justify-between gap-2 mb-4 w-full">
+                    <div class="flex-1 bg-blue-50 p-2 rounded-lg border border-blue-200 flex flex-col items-center">
+                        <div class="font-bold text-xs text-blue-600 mb-1">VOCÊ</div>
+                        <div id="myOfferDisplay" class="w-16 h-16 bg-white rounded border border-gray-300 mb-2 flex items-center justify-center text-xs text-gray-400">Vazio</div>
+                        <select id="tradeMyOfferSelect" class="w-full text-[10px] p-1 mb-2" onchange="game.updateTradeOffer(this.value)">
+                            <option value="">Nada</option>
+                        </select>
+                        <button id="btnLockMe" class="btn bg-gray-400 text-[10px] py-2 mb-0" onclick="game.toggleTradeReady()">PRONTO</button>
+                    </div>
+
+                    <div class="flex-1 bg-red-50 p-2 rounded-lg border border-red-200 flex flex-col items-center">
+                        <div class="font-bold text-xs text-red-600 mb-1" id="otherTraderName">Oponente</div>
+                        <div id="otherOfferDisplay" class="w-16 h-16 bg-white rounded border border-gray-300 mb-2 flex items-center justify-center text-xs text-gray-400">Vazio</div>
+                        <div class="text-[10px] text-gray-500 mt-2 italic">Escolhendo...</div>
+                        <div id="statusOther" class="text-[10px] font-bold text-red-500 mt-1">NÃO PRONTO</div>
+                    </div>
                 </div>
-                
-                <div class="mb-4 text-left">
-                     <label class="text-xs font-bold">O QUE VOCÊ QUER (ID DO GATO):</label>
-                     <select id="tradeWantCat" class="w-full bg-gray-100 p-2 rounded font-bold text-xs"></select>
-                </div>
-                
-                <div class="grid grid-cols-2 gap-2">
-                     <button class="btn bg-green-500" onclick="game.confirmSendTrade()">ENVIAR</button>
-                     <button class="btn bg-gray-500" onclick="document.getElementById('tradeScreen').classList.add('hidden')">CANCELAR</button>
-                </div>
+
+                <button id="btnFinalizeTrade" class="hidden btn bg-green-500 animate-pulse" onclick="game.finalizeTrade()">CONFIRMAR TROCA</button>
+                <button class="btn bg-red-500 mt-2" onclick="game.cancelTrade()">CANCELAR</button>
              </div>
         </div>
 
@@ -768,18 +801,23 @@
 <script>
 (function() {
     // =========================================================================
-    // 🛠️ ÁREA DE CONFIGURAÇÃO
+    // 🛠️ ÁREA DE CONFIGURAÇÃO FÁCIL
     // =========================================================================
     
+    // CÓDIGOS DE RESGATE
+    const CODIGOS_PROMOCIONAIS = [
+        { codigo: "SIXSEVEN", tipo: "moedas", valor: 676 },
+    ];
+
     // CONFIGURAÇÃO DE TORNEIOS
     const TOURNAMENT_CONFIG = [
         {
             id: 'torneio_inicio_2026',
-            nome: 'COPA DE JANEIRO',
-            inicio: new Date('2026-01-01T00:00:00').getTime(),
-            fim: new Date('2026-02-01T00:00:00').getTime(),
+            nome: 'COPA SIXSEVEN',
+            inicio: new Date('2026-04-01T00:00:00').getTime(),
+            fim: new Date('2026-05-01T00:00:00').getTime(),
             rodadas: 10,
-            premio: 'g010' // Gato de Botas
+            premio: '5000' // Gato de Botas
         }
     ];
 
@@ -1018,9 +1056,9 @@
     window.GAME_CATS = MEUS_GATOS;
     
     const NOTICIAS = [
-        { data: "03/01/2026", titulo: "V2.0 - TORNEIOS & TRADES", texto: "Agora você pode trocar gatos com amigos e participar de torneios!" },
-        { data: "03/01/2026", titulo: "SISTEMA DE AMIGOS!", texto: "Adicione amigos pelo Ranking ou pesquisando o nome." },
-        { data: "03/01/2026", titulo: "Atualização", texto: "Correções na loja e pontuação." }
+        { data: "03/01/2026", titulo: "NOVO TRADE!", texto: "Troque gatos com amigos em tempo real na tela de negociação!" },
+        { data: "03/01/2026", titulo: "V2.0 - TORNEIOS", texto: "Participe de torneios clicando no botão 'Participar'!" },
+        { data: "03/01/2026", titulo: "SISTEMA DE AMIGOS!", texto: "Adicione amigos pelo Ranking ou pesquisando o nome." }
     ];
     
     // PREÇOS
@@ -1067,8 +1105,8 @@
     // =========================================================================
     // ⚙️ SISTEMA DE SAVE
     // =========================================================================
-    const SAVE_KEY = 'gb_custom_v5';
-    // State agora inclui dados de torneio
+    const SAVE_KEY = 'gb_custom_v6';
+    // State agora inclui joinedTournaments
     let state = { 
         coins: 0, 
         unlocked: ['g001'], 
@@ -1076,7 +1114,9 @@
         highScore: 0, 
         counts: {'g001':1}, 
         friends: [],
-        tournaments: {} 
+        tournaments: {},
+        redeemedCodes: [],
+        joinedTournaments: [] // Lista de IDs de torneios que entrei
     };
     window.gameGetState = () => state;
     window.gameSetState = (newData) => {
@@ -1084,6 +1124,8 @@
         if(!state.counts) { state.counts = {}; state.unlocked.forEach(id => state.counts[id]=1); }
         if(!state.friends) state.friends = [];
         if(!state.tournaments) state.tournaments = {};
+        if(!state.redeemedCodes) state.redeemedCodes = [];
+        if(!state.joinedTournaments) state.joinedTournaments = [];
         updateUI();
     };
     window.gameLoadLocal = () => {
@@ -1094,6 +1136,8 @@
                 if(!state.counts) { state.counts = {}; state.unlocked.forEach(id => state.counts[id]=1); }
                 if(!state.friends) state.friends = [];
                 if(!state.tournaments) state.tournaments = {};
+                if(!state.redeemedCodes) state.redeemedCodes = [];
+                if(!state.joinedTournaments) state.joinedTournaments = [];
                 updateUI();
             }
         } catch(e) { console.log("Erro save local"); }
@@ -1231,7 +1275,7 @@
     const ctx = canvas.getContext('2d');
     let frames=0, score=0, playing=false, trail=[];
     let speed=3.0, gravity=0.25;
-    let activeTournament = null; // ID do torneio ativo na partida
+    let activeTournament = null; 
 
     let clouds = [];
     for(let i=0; i<5; i++) {
@@ -1298,21 +1342,23 @@
     const pipes = {
         list: [],
         update: function() {
-            // PROGRESSIVE DIFFICULTY:
-            // Aumenta velocidade baseada no score
+            // Dificuldade aumenta apenas velocidade
             let diffMult = 1 + (score * 0.05); 
-            if(diffMult > 2.5) diffMult = 2.5; // Cap de velocidade max
+            if(diffMult > 2.5) diffMult = 2.5; 
             let currentSpeed = speed * diffMult;
 
-            // Diminui o intervalo de spawn baseado na dificuldade
-            let spawnRate = 110 - (score * 2);
-            if(spawnRate < 60) spawnRate = 60;
-
-            if(frames % spawnRate === 0) { 
+            // SPAWN CONSTANTE: Baseado na distância do último cano
+            // Se não tem canos, ou se o último cano já andou 220px pra esquerda
+            if (this.list.length === 0 || canvas.width - this.list[this.list.length-1].x >= 220) {
                 let gap = 170;
-                let y = Math.random() * (canvas.height - 350) + 100;
+                // Clamp Y para evitar impossíveis (Margem de 50px cima/baixo)
+                let minY = 50;
+                let maxY = canvas.height - 50 - gap; // Altura total - chão - abertura
+                let y = Math.random() * (maxY - minY) + minY;
+                
                 this.list.push({x: canvas.width, y, gap, scored: false});
             }
+
             this.list.forEach(p => {
                 p.x -= currentSpeed;
                 if(bird.x + 20 > p.x && bird.x - 20 < p.x + 60) {
@@ -1322,13 +1368,13 @@
                     p.scored = true;
                     score++;
                     audioCtx.play('score');
-                    // Moedas só se não for torneio (regra opcional, mas aqui deixei ambos ganhando)
                     const cat = MEUS_GATOS.find(c => c.id === state.equipped);
                     state.coins += (cat ? cat.multiplicador : 1);
                     document.getElementById('scoreDisplay').innerText = score;
                 }
             });
-            if(this.list[0]?.x < -100) this.list.shift();
+            // Remove canos que saíram da tela
+            if(this.list.length > 0 && this.list[0].x < -100) this.list.shift();
         },
         draw: function() {
             this.list.forEach(p => {
@@ -1380,8 +1426,8 @@
         audioCtx.play('gameover');
         if(score > state.highScore) state.highScore = score;
         
-        // Lógica de Torneio
-        if(activeTournament) {
+        // Lógica de Torneio (SÓ PONTUA SE TIVER JOINED)
+        if(activeTournament && state.joinedTournaments.includes(activeTournament)) {
             const tData = state.tournaments[activeTournament] || { roundsPlayed: 0, totalScore: 0, bestScore: 0 };
             tData.roundsPlayed++;
             tData.totalScore += score;
@@ -1402,6 +1448,9 @@
         document.getElementById('hud').classList.add('hidden');
     }
 
+    let activeTradeUnsub = null;
+    let currentTradeId = null;
+
     window.game = {
         startGame: () => {
             // Verifica Torneio
@@ -1412,14 +1461,16 @@
             document.getElementById('tournamentHud').classList.add('hidden');
 
             if(validTournament) {
-                // Checa se usuário tem rodadas
-                if(!state.tournaments) state.tournaments = {};
-                const tData = state.tournaments[validTournament.id] || { roundsPlayed: 0 };
-                
-                if(tData.roundsPlayed < validTournament.rodadas) {
-                    activeTournament = validTournament.id;
-                    document.getElementById('tournamentHud').classList.remove('hidden');
-                    document.getElementById('tournamentHud').innerText = `🏆 TORNEIO: Rodada ${tData.roundsPlayed + 1}/${validTournament.rodadas}`;
+                // Checa se usuário entrou no torneio
+                if(state.joinedTournaments.includes(validTournament.id)) {
+                    if(!state.tournaments) state.tournaments = {};
+                    const tData = state.tournaments[validTournament.id] || { roundsPlayed: 0 };
+                    
+                    if(tData.roundsPlayed < validTournament.rodadas) {
+                        activeTournament = validTournament.id;
+                        document.getElementById('tournamentHud').classList.remove('hidden');
+                        document.getElementById('tournamentHud').innerText = `🏆 TORNEIO: Rodada ${tData.roundsPlayed + 1}/${validTournament.rodadas}`;
+                    }
                 }
             }
 
@@ -1453,9 +1504,6 @@
             }
             if(name === 'friends') {
                 renderFriends();
-            }
-            if(name === 'notifications') {
-                if(window.refreshNotifs) window.refreshNotifs();
             }
             if(name === 'tournaments') {
                 renderTournaments();
@@ -1509,77 +1557,196 @@
             save();
             alert(`${name} agora é seu amigo!`);
         },
-        openTradeUI: (friendId) => {
-             const friend = state.friends.find(f => f.uid === friendId);
-             if(!friend) return;
+        
+        // --- CÓDIGOS PROMOCIONAIS ---
+        redeemCode: () => {
+             const input = document.getElementById('codeInput');
+             const code = input.value.trim().toUpperCase();
+             const msg = CODIGOS_PROMOCIONAIS.find(c => c.codigo === code);
              
-             document.getElementById('tradeScreen').classList.remove('hidden');
-             document.getElementById('tradeFriendId').value = friendId;
+             if(state.redeemedCodes.includes(code)) return alert("Código já resgatado!");
              
-             // Preencher lista de gatos que eu tenho (>1 para não ficar sem)
-             // Na verdade, pode trocar qualquer um, mas o jogador decide.
-             const mySelect = document.getElementById('tradeMyCat');
-             mySelect.innerHTML = '';
-             state.unlocked.forEach(catId => {
+             if(msg) {
+                 if(msg.tipo === 'moedas') {
+                     state.coins += msg.valor;
+                     alert(`Resgatado! +${msg.valor} Moedas!`);
+                 }
+                 if(msg.tipo === 'gato') {
+                     if(!state.unlocked.includes(msg.valor)) state.unlocked.push(msg.valor);
+                     state.counts[msg.valor] = (state.counts[msg.valor] || 0) + 1;
+                     alert(`Resgatado! Novo Gato desbloqueado!`);
+                 }
+                 state.redeemedCodes.push(code);
+                 save();
+                 input.value = "";
+                 document.getElementById('shopBalance').innerText = Math.floor(state.coins);
+             } else {
+                 alert("Código inválido!");
+             }
+        },
+
+        // --- TORNEIOS (ENTRAR/SAIR) ---
+        joinTournament: (id) => {
+             if(confirm("Deseja entrar no torneio?")) {
+                 if(!state.joinedTournaments.includes(id)) {
+                     state.joinedTournaments.push(id);
+                     save();
+                     renderTournaments();
+                 }
+             }
+        },
+        leaveTournament: (id) => {
+            if(confirm("Sair do torneio? Seu progresso será pausado.")) {
+                 state.joinedTournaments = state.joinedTournaments.filter(x => x !== id);
+                 save();
+                 renderTournaments();
+            }
+        },
+
+        // --- REAL TIME TRADE ---
+        startRealtimeTrade: async (sessionId, otherUid, otherName) => {
+            const { doc, setDoc, onSnapshot, deleteDoc, updateDoc } = window.firebaseDb;
+            
+            // Cria documento de sessão se não existir
+            const sessionRef = doc(window.firebaseDb, "active_trades", sessionId);
+            // Tenta criar (se for o convidado aceitando, cria o doc inicial)
+            // Se for o host (que recebeu o aviso que o convidado aceitou... mas aqui simplificamos:
+            // O convidado aceita, cria o doc e a UI. O host teria que estar monitorando?
+            // Vamos fazer o convidado criar e o host precisa entrar.
+            // SIMPLIFICAÇÃO: O convidado clica "Negociar". Isso cria o doc.
+            // O HOST precisa de um jeito de saber. 
+            // O sistema ideal usa listener no user. Mas para simplificar neste arquivo:
+            // Ambos usam o ID da notificação como ID da sessão.
+            
+            await setDoc(sessionRef, {
+                p1: window.authSystem.user.uid,
+                p2: otherUid,
+                p1Name: window.authSystem.user.displayName,
+                p2Name: otherName,
+                offer1: null,
+                offer2: null,
+                ready1: false,
+                ready2: false,
+                finished: false
+            }, { merge: true });
+
+            currentTradeId = sessionId;
+            document.getElementById('realtimeTradeScreen').classList.remove('hidden');
+            document.getElementById('otherTraderName').innerText = otherName;
+            
+            // Preenche select
+            const mySelect = document.getElementById('tradeMyOfferSelect');
+            mySelect.innerHTML = '<option value="">Nada</option>';
+            state.unlocked.forEach(catId => {
                  const cat = MEUS_GATOS.find(c => c.id === catId);
                  const count = state.counts[catId] || 0;
-                 if(count > 0) { // Permite trocar se tiver
+                 if(count > 0) {
                      const opt = document.createElement('option');
                      opt.value = catId;
-                     opt.text = `${cat.nome} (Você tem: ${count})`;
+                     opt.text = `${cat.nome} (x${count})`;
                      mySelect.appendChild(opt);
                  }
-             });
-             
-             // Preencher lista de gatos que quero (todos os gatos do jogo)
-             const wantSelect = document.getElementById('tradeWantCat');
-             wantSelect.innerHTML = '';
-             MEUS_GATOS.forEach(cat => {
-                 const opt = document.createElement('option');
-                 opt.value = cat.id;
-                 opt.text = `${cat.nome} [${cat.raridade}]`;
-                 wantSelect.appendChild(opt);
-             });
+            });
+
+            // Listener
+            activeTradeUnsub = onSnapshot(sessionRef, (snap) => {
+                if(!snap.exists()) {
+                    // Sessão cancelada
+                    game.cancelTrade(false);
+                    return;
+                }
+                const data = snap.data();
+                const isP1 = window.authSystem.user.uid === data.p1;
+                
+                // Offers
+                const myOffer = isP1 ? data.offer1 : data.offer2;
+                const otherOffer = isP1 ? data.offer2 : data.offer1;
+                const myReady = isP1 ? data.ready1 : data.ready2;
+                const otherReady = isP1 ? data.ready2 : data.ready1;
+
+                // UI Update
+                document.getElementById('myOfferDisplay').innerText = myOffer ? MEUS_GATOS.find(c=>c.id===myOffer).nome : "Nada";
+                document.getElementById('otherOfferDisplay').innerText = otherOffer ? MEUS_GATOS.find(c=>c.id===otherOffer).nome : "Nada";
+                
+                document.getElementById('statusOther').innerText = otherReady ? "PRONTO" : "NÃO PRONTO";
+                document.getElementById('statusOther').className = otherReady ? "text-[10px] font-bold text-green-500 mt-1" : "text-[10px] font-bold text-red-500 mt-1";
+                
+                document.getElementById('btnLockMe').innerText = myReady ? "CANCELAR PRONTO" : "PRONTO";
+                document.getElementById('tradeMyOfferSelect').disabled = myReady;
+
+                if(myReady && otherReady) {
+                    document.getElementById('btnFinalizeTrade').classList.remove('hidden');
+                    document.getElementById('tradeStatus').innerText = "Ambos prontos! Confirme para trocar.";
+                } else {
+                    document.getElementById('btnFinalizeTrade').classList.add('hidden');
+                    document.getElementById('tradeStatus').innerText = "Negociando...";
+                }
+            });
         },
-        confirmSendTrade: () => {
-             const friendId = document.getElementById('tradeFriendId').value;
-             const offerCatId = document.getElementById('tradeMyCat').value;
-             const wantCatId = document.getElementById('tradeWantCat').value;
-             
-             const offerName = MEUS_GATOS.find(c => c.id === offerCatId).nome;
-             const wantName = MEUS_GATOS.find(c => c.id === wantCatId).nome;
-             
-             window.sendTrade(friendId, offerCatId, wantCatId, offerName, wantName);
+        updateTradeOffer: async (val) => {
+            if(!currentTradeId) return;
+            const { doc, updateDoc, getDoc } = window.firebaseDb;
+            const sessionRef = doc(window.firebaseDb, "active_trades", currentTradeId);
+            const snap = await getDoc(sessionRef);
+            if(snap.exists()) {
+                const data = snap.data();
+                const isP1 = window.authSystem.user.uid === data.p1;
+                if(isP1) await updateDoc(sessionRef, { offer1: val || null, ready1: false, ready2: false });
+                else await updateDoc(sessionRef, { offer2: val || null, ready1: false, ready2: false });
+            }
         },
-        executeTrade: async (notifId, tradeData) => {
-             // Executar troca segura via Firestore Transaction
-             // 1. Verifica se quem aceita (eu) tenho o gato pedido (wantCatId)
-             // 2. Verifica se quem enviou ainda tem o gato oferecido (offerCatId)
-             // Como é client side, fazemos uma checagem local e depois tentamos atualizar
-             
-             if((state.counts[tradeData.wantCatId] || 0) < 1) {
-                 return alert("Você não tem o gato que seu amigo quer!");
+        toggleTradeReady: async () => {
+             if(!currentTradeId) return;
+             const { doc, updateDoc, getDoc } = window.firebaseDb;
+             const sessionRef = doc(window.firebaseDb, "active_trades", currentTradeId);
+             const snap = await getDoc(sessionRef);
+             if(snap.exists()) {
+                const data = snap.data();
+                const isP1 = window.authSystem.user.uid === data.p1;
+                if(isP1) await updateDoc(sessionRef, { ready1: !data.ready1 });
+                else await updateDoc(sessionRef, { ready2: !data.ready2 });
              }
-             
-             if(confirm(`Trocar seu ${tradeData.wantCatName} pelo ${tradeData.offerCatName} de ${tradeData.fromName}?`)) {
-                 const { doc, runTransaction, getDoc, updateDoc, deleteDoc } = window.firebaseDb; 
-                 // Simulação de transação segura local + update
+        },
+        finalizeTrade: async () => {
+             // Executa a troca local e deleta a sessão
+             // Em um app real, use cloud functions. Aqui, simulamos.
+             const { doc, getDoc, deleteDoc } = window.firebaseDb;
+             const sessionRef = doc(window.firebaseDb, "active_trades", currentTradeId);
+             const snap = await getDoc(sessionRef);
+             if(snap.exists()) {
+                 const data = snap.data();
+                 const isP1 = window.authSystem.user.uid === data.p1;
                  
-                 // Remove meu gato
-                 state.counts[tradeData.wantCatId]--;
-                 if(state.counts[tradeData.wantCatId] === 0) {
-                     state.unlocked = state.unlocked.filter(id => id !== tradeData.wantCatId);
-                     if(state.equipped === tradeData.wantCatId) state.equipped = 'g001';
+                 const myItem = isP1 ? data.offer1 : data.offer2;
+                 const getItem = isP1 ? data.offer2 : data.offer1;
+                 
+                 // Remove meu item
+                 if(myItem) {
+                     state.counts[myItem]--;
+                     if(state.counts[myItem] <= 0) {
+                         state.unlocked = state.unlocked.filter(i => i !== myItem);
+                         if(state.equipped === myItem) state.equipped = 'g001';
+                     }
+                 }
+                 // Adiciona item
+                 if(getItem) {
+                     if(!state.unlocked.includes(getItem)) state.unlocked.push(getItem);
+                     state.counts[getItem] = (state.counts[getItem] || 0) + 1;
                  }
                  
-                 // Adiciona novo gato
-                 if(!state.unlocked.includes(tradeData.offerCatId)) state.unlocked.push(tradeData.offerCatId);
-                 state.counts[tradeData.offerCatId] = (state.counts[tradeData.offerCatId] || 0) + 1;
-                 
                  save();
-                 await deleteDoc(doc(window.firebaseDb, "notifications", notifId));
-                 alert("Troca realizada com sucesso!");
+                 alert("Troca realizada!");
+                 await deleteDoc(sessionRef); // Encerra pra todos
              }
+        },
+        cancelTrade: async (deleteSession = true) => {
+            if(activeTradeUnsub) activeTradeUnsub();
+            if(deleteSession && currentTradeId) {
+                const { doc, deleteDoc } = window.firebaseDb;
+                await deleteDoc(doc(window.firebaseDb, "active_trades", currentTradeId)).catch(e=>{});
+            }
+            document.getElementById('realtimeTradeScreen').classList.add('hidden');
+            currentTradeId = null;
         }
     };
     
@@ -1590,12 +1757,30 @@
             list.innerHTML = '<div class="text-gray-400 text-sm text-center mt-10">Você ainda não tem amigos.<br>Adicione pelo Rank ou Pesquisa.</div>';
             return;
         }
-        state.friends.forEach(f => {
+        
+        // Pega status online de todos os amigos
+        const { doc, getDoc } = window.firebaseDb;
+        
+        state.friends.forEach(async (f) => {
             const div = document.createElement('div');
             div.className = 'friend-row';
+            
+            // Checa online
+            let isOnline = false;
+            try {
+                const snap = await getDoc(doc(window.firebaseDb, "users", f.uid));
+                if(snap.exists()) {
+                    const last = snap.data().lastActive || 0;
+                    if(Date.now() - last < 5 * 60 * 1000) isOnline = true;
+                }
+            } catch(e){}
+
             div.innerHTML = `
-                <span><i class="fas fa-user text-cyan-500 mr-2"></i> ${f.name}</span>
-                <button class="btn bg-purple-500 text-[10px] py-1 px-3 w-auto mb-0" onclick="game.openTradeUI('${f.uid}')">TROCAR</button>
+                <div class="flex items-center">
+                    <span class="${isOnline ? 'online-dot' : 'offline-dot'}"></span>
+                    <span><i class="fas fa-user text-cyan-500 mr-2"></i> ${f.name}</span>
+                </div>
+                <button class="btn bg-purple-500 text-[10px] py-1 px-3 w-auto mb-0" onclick="window.sendTradeInvite('${f.uid}')">NEGOCIAR</button>
             `;
             list.appendChild(div);
         });
@@ -1611,6 +1796,7 @@
             const userData = state.tournaments ? (state.tournaments[t.id] || {}) : {};
             const roundsPlayed = userData.roundsPlayed || 0;
             const bestScore = userData.bestScore || 0;
+            const isJoined = state.joinedTournaments.includes(t.id);
             
             const div = document.createElement('div');
             div.className = `p-4 rounded-xl mb-2 border-2 ${isActive ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-100 border-gray-200 opacity-60'}`;
@@ -1626,7 +1812,11 @@
                     Rodadas: ${roundsPlayed}/${t.rodadas}<br>
                     Seu Melhor Record: ${bestScore}
                 </div>
-                ${isActive ? `<p class="text-[10px] text-indigo-500 font-bold">Jogue normalmente para pontuar!</p>` : ''}
+                <div class="flex gap-2">
+                    ${isActive && !isJoined ? `<button class="btn bg-green-500 py-1 text-xs" onclick="game.joinTournament('${t.id}')">PARTICIPAR</button>` : ''}
+                    ${isActive && isJoined ? `<button class="btn bg-red-500 py-1 text-xs" onclick="game.leaveTournament('${t.id}')">SAIR</button>` : ''}
+                </div>
+                ${isJoined ? `<p class="text-[10px] text-indigo-500 font-bold mt-1">Você está participando!</p>` : ''}
             `;
             list.appendChild(div);
         });
