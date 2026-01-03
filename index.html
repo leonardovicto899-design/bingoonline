@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Gato Bird - Deluxe Edition</title>
+    <title>Gato Bird - Versão Corrigida</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -174,13 +174,8 @@
             z-index: 5;
         }
 
-        .online-dot {
-            width: 8px; height: 8px; background-color: #22c55e; border-radius: 50%; display: inline-block; margin-right: 5px;
-            box-shadow: 0 0 5px #22c55e;
-        }
-        .offline-dot {
-            width: 8px; height: 8px; background-color: #9ca3af; border-radius: 50%; display: inline-block; margin-right: 5px;
-        }
+        .online-dot { width: 8px; height: 8px; background-color: #22c55e; border-radius: 50%; display: inline-block; margin-right: 5px; box-shadow: 0 0 5px #22c55e; }
+        .offline-dot { width: 8px; height: 8px; background-color: #9ca3af; border-radius: 50%; display: inline-block; margin-right: 5px; }
     </style>
 
     <script type="module">
@@ -202,12 +197,12 @@
         window.firebaseDb = db;
         window.firebaseAuth = auth;
 
-        // Atualizador de Presença
+        // Atualizador de Presença (Para o Online)
         setInterval(() => {
             if(auth.currentUser) {
-                updateDoc(doc(db, "users", auth.currentUser.uid), { lastActive: Date.now() }).catch(()=>{});
+                updateDoc(doc(db, "users", auth.currentUser.uid), { lastActive: Date.now() }).catch(e => console.log("Erro ao atualizar online:", e));
             }
-        }, 60000); // A cada 1 minuto
+        }, 60000); 
 
         window.authSystem = {
             user: null,
@@ -248,7 +243,12 @@
                     
                     const user = auth.currentUser;
                     await updateProfile(user, { displayName: name });
-                    await setDoc(doc(db, "users", user.uid), { displayName: name, lastActive: Date.now() }, { merge: true });
+                    // Garante que o documento do usuário é criado corretamente
+                    await setDoc(doc(db, "users", user.uid), { 
+                        displayName: name, 
+                        lastActive: Date.now(),
+                        highScore: 0
+                    }, { merge: true });
                     
                     document.getElementById('nameSetupScreen').classList.add('hidden');
                     window.location.reload();
@@ -273,7 +273,7 @@
             }
         };
 
-        // Escuta Autenticação
+        // ESCUTA AUTENTICAÇÃO
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 window.authSystem.user = user;
@@ -287,15 +287,20 @@
 
                 document.getElementById('logoutBtn').classList.remove('hidden');
                 
+                // Carrega dados e inicia Listener de Notificações
                 const docRef = doc(db, "users", user.uid);
                 const docSnap = await getDoc(docRef);
+                
+                // Atualiza timestamp de login
+                await updateDoc(docRef, { lastActive: Date.now() }).catch(()=>{});
+
                 if (docSnap.exists() && window.gameSetState) {
                     window.gameSetState(docSnap.data());
                 } else if(window.gameGetState) {
                     window.authSystem.saveData(window.gameGetState());
                 }
                 
-                // INICIAR ESCUTA DE NOTIFICAÇÕES EM TEMPO REAL
+                // *** PONTO CRÍTICO: INICIAR LISTENER ***
                 window.startNotificationListener();
 
                 document.getElementById('loginScreen').classList.add('hidden');
@@ -320,17 +325,24 @@
                     let found = false;
                     snap.forEach(async (d) => {
                          if(d.id !== auth.currentUser.uid) {
-                             // Envia solicitação de amizade via notificação
-                             await addDoc(collection(db, "notifications"), {
-                                 from: auth.currentUser.uid,
-                                 fromName: auth.currentUser.displayName,
-                                 to: d.id,
-                                 type: 'friend_request',
-                                 date: Date.now()
-                             });
-                             msg.innerText = `Solicitação enviada para ${d.data().displayName}`;
-                             input.value = "";
-                             found = true;
+                             // Verifica se já não são amigos (opcional, mas bom)
+                             // Envia solicitação
+                             try {
+                                 await addDoc(collection(db, "notifications"), {
+                                     from: auth.currentUser.uid,
+                                     fromName: auth.currentUser.displayName,
+                                     to: d.id,
+                                     type: 'friend_request',
+                                     date: Date.now()
+                                 });
+                                 msg.innerText = `Enviado para ${d.data().displayName}!`;
+                                 msg.style.color = '#10B981'; // Verde
+                                 input.value = "";
+                                 found = true;
+                             } catch(err) {
+                                 msg.innerText = "Erro ao enviar.";
+                                 console.error(err);
+                             }
                          }
                     });
                     if(!found) msg.innerText = "Você não pode se adicionar.";
@@ -390,24 +402,36 @@
             }
         };
 
-        // NOTIFICAÇÕES EM TEMPO REAL
+        // NOTIFICAÇÕES EM TEMPO REAL (CORRIGIDO)
         window.startNotificationListener = () => {
-            if(!auth.currentUser) return;
+            if(!auth.currentUser) {
+                console.log("Tentou iniciar listener sem usuário");
+                return;
+            }
+            console.log("Iniciando listener para:", auth.currentUser.uid);
+            
             const notifList = document.getElementById('notifList');
-            // Query para minhas notificações
+            // Query para buscar onde 'to' == 'meu ID'
             const q = query(collection(db, "notifications"), where("to", "==", auth.currentUser.uid));
             
-            // onSnapshot para real-time
+            // onSnapshot mantem a conexão aberta
             onSnapshot(q, (snapshot) => {
                 notifList.innerHTML = '';
                 let validCount = 0;
                 const now = Date.now();
                 
+                if(snapshot.empty) {
+                    document.getElementById('notifBadge').classList.add('hidden');
+                    notifList.innerHTML = '<div class="text-gray-400 text-sm text-center">Sem notificações novas.</div>';
+                    return;
+                }
+
                 snapshot.forEach(docSnap => {
                     const notif = docSnap.data();
-                    // Filtra notificações de trade expiradas (30s)
+                    
+                    // Expira convites de troca após 30s
                     if(notif.type === 'trade_invite' && (now - notif.date > 30000)) {
-                         deleteDoc(doc(db, "notifications", docSnap.id)); // Limpa antiga
+                         deleteDoc(doc(db, "notifications", docSnap.id)); 
                          return;
                     }
 
@@ -427,7 +451,6 @@
                     }
                     
                     if(notif.type === 'trade_invite') {
-                         // Barra de tempo visual
                          const timeLeft = Math.max(0, 30 - Math.floor((now - notif.date)/1000));
                          el.innerHTML = `
                              <div class="font-bold text-sm mb-1"><i class="fas fa-exchange-alt text-purple-500"></i> Convite de Troca</div>
@@ -442,26 +465,31 @@
 
                     notifList.appendChild(el);
                     
-                    // Event Listeners
+                    // Event Listeners Dinâmicos (SetTimeout garante que o DOM existe)
                     setTimeout(() => {
-                        if(document.getElementById(`deny-${docSnap.id}`)) {
-                            document.getElementById(`deny-${docSnap.id}`).onclick = async () => {
+                        const denyBtn = document.getElementById(`deny-${docSnap.id}`);
+                        if(denyBtn) {
+                            denyBtn.onclick = async () => {
                                 await deleteDoc(doc(db, "notifications", docSnap.id));
                             };
                         }
-                        if(document.getElementById(`accept-${docSnap.id}`)) {
-                            document.getElementById(`accept-${docSnap.id}`).onclick = async () => {
+                        
+                        const accFriendBtn = document.getElementById(`accept-${docSnap.id}`);
+                        if(accFriendBtn) {
+                            accFriendBtn.onclick = async () => {
                                 await game.acceptFriend(notif.from, notif.fromName);
                                 await deleteDoc(doc(db, "notifications", docSnap.id));
                             };
                         }
-                        if(document.getElementById(`accept-trade-${docSnap.id}`)) {
-                             document.getElementById(`accept-trade-${docSnap.id}`).onclick = async () => {
-                                 await deleteDoc(doc(db, "notifications", docSnap.id)); // Remove notif
-                                 game.startRealtimeTrade(docSnap.id, notif.from, notif.fromName); // Inicia sessão com ID baseado na notif
+                        
+                        const accTradeBtn = document.getElementById(`accept-trade-${docSnap.id}`);
+                        if(accTradeBtn) {
+                             accTradeBtn.onclick = async () => {
+                                 await deleteDoc(doc(db, "notifications", docSnap.id)); 
+                                 game.startRealtimeTrade(docSnap.id, notif.from, notif.fromName);
                              };
                         }
-                    }, 0);
+                    }, 50);
                 });
 
                 const badge = document.getElementById('notifBadge');
@@ -470,12 +498,10 @@
                     badge.innerText = validCount;
                 } else {
                     badge.classList.add('hidden');
-                    notifList.innerHTML = '<div class="text-gray-400 text-sm text-center">Sem notificações novas.</div>';
                 }
             });
         };
         
-        // --- SISTEMA DE TRADE REAL-TIME ---
         window.sendTradeInvite = async (friendId) => {
             if(!auth.currentUser) return;
             try {
@@ -487,9 +513,6 @@
                     date: Date.now()
                 });
                 alert("Convite enviado! Aguarde 30s.");
-                // O criador também monitora um documento de sessão, mas vamos simplificar:
-                // Quando o amigo aceitar, ele cria o doc de sessão e ambos entram.
-                // Na vdd, melhor criar a sessão agora e esperar.
             } catch(e) { alert("Erro ao enviar."); console.error(e); }
         };
 
@@ -520,7 +543,7 @@
 
     <div id="game-container">
         <canvas id="gameCanvas"></canvas>
-        <div id="versionLabel">v2.0</div>
+        <div id="versionLabel">v2.1 Fix</div>
         
         <div id="muteBtn" class="interactive" onclick="game.toggleMute()">
             <i class="fas fa-volume-up" id="muteIcon"></i>
@@ -637,8 +660,7 @@
                     <h2 class="text-2xl font-black text-indigo-600"><i class="fas fa-medal"></i> TORNEIOS</h2>
                     <button onclick="game.openUI('menu')" class="w-8 h-8 bg-gray-100 rounded-full font-bold">X</button>
                 </div>
-                <div id="tournamentList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar">
-                     </div>
+                <div id="tournamentList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar"></div>
              </div>
         </div>
 
@@ -806,18 +828,18 @@
     
     // CÓDIGOS DE RESGATE
     const CODIGOS_PROMOCIONAIS = [
-        { codigo: "SIXSEVEN", tipo: "moedas", valor: 676 },
+        { codigo: "SIXSEVEN", tipo: "moedas", valor: 500 },
     ];
 
     // CONFIGURAÇÃO DE TORNEIOS
     const TOURNAMENT_CONFIG = [
         {
-            id: 'torneio_inicio_2026',
-            nome: 'COPA SIXSEVEN',
+            id: 'copa inicio',
+            nome: 'copa inicio',
             inicio: new Date('2026-04-01T00:00:00').getTime(),
             fim: new Date('2026-05-01T00:00:00').getTime(),
             rodadas: 10,
-            premio: '5000' // Gato de Botas
+            premio: '5000' 
         }
     ];
 
@@ -1056,7 +1078,7 @@
     window.GAME_CATS = MEUS_GATOS;
     
     const NOTICIAS = [
-        { data: "03/01/2026", titulo: "NOVO TRADE!", texto: "Troque gatos com amigos em tempo real na tela de negociação!" },
+        { data: "03/01/2026", titulo: "CORREÇÃO DE BUGS", texto: "Canos agora são mais justos e sistema de amigos foi consertado!" },
         { data: "03/01/2026", titulo: "V2.0 - TORNEIOS", texto: "Participe de torneios clicando no botão 'Participar'!" },
         { data: "03/01/2026", titulo: "SISTEMA DE AMIGOS!", texto: "Adicione amigos pelo Ranking ou pesquisando o nome." }
     ];
@@ -1342,19 +1364,22 @@
     const pipes = {
         list: [],
         update: function() {
-            // Dificuldade aumenta apenas velocidade
             let diffMult = 1 + (score * 0.05); 
             if(diffMult > 2.5) diffMult = 2.5; 
             let currentSpeed = speed * diffMult;
 
-            // SPAWN CONSTANTE: Baseado na distância do último cano
-            // Se não tem canos, ou se o último cano já andou 220px pra esquerda
+            // --- CORREÇÃO DOS CANOS: SPAWN POR DISTÂNCIA ---
+            // Só cria cano se não tiver nenhum OU se o último estiver longe
             if (this.list.length === 0 || canvas.width - this.list[this.list.length-1].x >= 220) {
-                let gap = 170;
-                // Clamp Y para evitar impossíveis (Margem de 50px cima/baixo)
-                let minY = 50;
-                let maxY = canvas.height - 50 - gap; // Altura total - chão - abertura
-                let y = Math.random() * (maxY - minY) + minY;
+                let gap = 170; // Abertura fixa grande
+                let padding = 80; // Margem segura do topo e chão
+                
+                // Calcula limite matemático
+                let minPipe = padding;
+                let maxPipe = canvas.height - padding - gap;
+                
+                // Gera altura aleatória dentro dos limites seguros
+                let y = Math.floor(Math.random() * (maxPipe - minPipe + 1)) + minPipe;
                 
                 this.list.push({x: canvas.width, y, gap, scored: false});
             }
@@ -1373,7 +1398,6 @@
                     document.getElementById('scoreDisplay').innerText = score;
                 }
             });
-            // Remove canos que saíram da tela
             if(this.list.length > 0 && this.list[0].x < -100) this.list.shift();
         },
         draw: function() {
@@ -1607,16 +1631,7 @@
         startRealtimeTrade: async (sessionId, otherUid, otherName) => {
             const { doc, setDoc, onSnapshot, deleteDoc, updateDoc } = window.firebaseDb;
             
-            // Cria documento de sessão se não existir
             const sessionRef = doc(window.firebaseDb, "active_trades", sessionId);
-            // Tenta criar (se for o convidado aceitando, cria o doc inicial)
-            // Se for o host (que recebeu o aviso que o convidado aceitou... mas aqui simplificamos:
-            // O convidado aceita, cria o doc e a UI. O host teria que estar monitorando?
-            // Vamos fazer o convidado criar e o host precisa entrar.
-            // SIMPLIFICAÇÃO: O convidado clica "Negociar". Isso cria o doc.
-            // O HOST precisa de um jeito de saber. 
-            // O sistema ideal usa listener no user. Mas para simplificar neste arquivo:
-            // Ambos usam o ID da notificação como ID da sessão.
             
             await setDoc(sessionRef, {
                 p1: window.authSystem.user.uid,
@@ -1651,7 +1666,6 @@
             // Listener
             activeTradeUnsub = onSnapshot(sessionRef, (snap) => {
                 if(!snap.exists()) {
-                    // Sessão cancelada
                     game.cancelTrade(false);
                     return;
                 }
@@ -1708,8 +1722,6 @@
              }
         },
         finalizeTrade: async () => {
-             // Executa a troca local e deleta a sessão
-             // Em um app real, use cloud functions. Aqui, simulamos.
              const { doc, getDoc, deleteDoc } = window.firebaseDb;
              const sessionRef = doc(window.firebaseDb, "active_trades", currentTradeId);
              const snap = await getDoc(sessionRef);
@@ -1736,7 +1748,7 @@
                  
                  save();
                  alert("Troca realizada!");
-                 await deleteDoc(sessionRef); // Encerra pra todos
+                 await deleteDoc(sessionRef); 
              }
         },
         cancelTrade: async (deleteSession = true) => {
@@ -1758,14 +1770,12 @@
             return;
         }
         
-        // Pega status online de todos os amigos
         const { doc, getDoc } = window.firebaseDb;
         
         state.friends.forEach(async (f) => {
             const div = document.createElement('div');
             div.className = 'friend-row';
             
-            // Checa online
             let isOnline = false;
             try {
                 const snap = await getDoc(doc(window.firebaseDb, "users", f.uid));
