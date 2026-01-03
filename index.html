@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gato Bird - Online Edition</title>
+    <title>Gato Bird - Deluxe Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
@@ -20,7 +20,7 @@
         #game-container {
             position: relative;
             width: 100vw; height: 100vh;
-            background: linear-gradient(180deg, #4facfe 0%, #00f2fe 100%);
+            background: linear-gradient(180deg, #63a4ff 0%, #83eaf1 100%); /* Céu mais bonito */
             overflow: hidden;
         }
         canvas { display: block; z-index: 1; }
@@ -108,24 +108,38 @@
         }
         .hidden { display: none !important; }
         
-        /* Utilitários Extras */
         .daily-timer { font-size: 0.7rem; background: #000; color: #10B981; padding: 2px 6px; border-radius: 4px; margin-left: 5px; }
         .leaderboard-row { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; font-size: 0.9rem; font-weight: bold; }
         
-        /* Estilo Notícias */
         .news-item { text-align: left; background: #f3f4f6; padding: 10px; border-radius: 12px; margin-bottom: 8px; border-left: 4px solid #F59E0B; }
         .news-date { font-size: 0.7rem; color: #9ca3af; font-weight: bold; }
         .news-title { font-weight: 800; color: #374151; font-size: 1rem; }
         .news-body { font-size: 0.85rem; color: #4b5563; margin-top: 4px; line-height: 1.2; }
+
+        /* Botão Mute Flutuante */
+        #muteBtn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 40px; height: 40px;
+            background: white;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.2rem;
+            color: #333;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            z-index: 50;
+            cursor: pointer;
+            border: 2px solid #eee;
+        }
+        #muteBtn:active { transform: scale(0.9); }
     </style>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
         import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
-        // =========================================================================
-        // ⚠️ SUBSTITUA AQUI PELAS SUAS CHAVES DO FIREBASE
-        // =========================================================================
+        
         const firebaseConfig = {
             apiKey: "AIzaSyAh1Xzb616gPPnnmrjTJSGKp1zwosuVO7w",
             authDomain: "cat-bird.firebaseapp.com",
@@ -134,13 +148,11 @@
             messagingSenderId: "1050244688440",
             appId: "1:1050244688440:web:168777901fb3ebb1c454cd"
         };
-        // =========================================================================
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // Sistema Global de Auth
         window.authSystem = {
             user: null,
             login: async () => {
@@ -182,13 +194,11 @@
                 document.getElementById('authMsg').innerText = "Sucesso!";
                 document.getElementById('logoutBtn').classList.remove('hidden');
                 
-                // Carregar do Banco
                 const docRef = doc(db, "users", user.uid);
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists() && window.gameSetState) {
                     window.gameSetState(docSnap.data());
                 } else if(window.gameGetState) {
-                    // Salvar estado inicial
                     window.authSystem.saveData(window.gameGetState());
                 }
                 document.getElementById('loginScreen').classList.add('hidden');
@@ -202,6 +212,10 @@
         <canvas id="gameCanvas"></canvas>
         
         <div id="dropNotif" class="hidden">🎁 NOVA CAIXA! (+25 PTS)</div>
+        
+        <div id="muteBtn" class="interactive" onclick="game.toggleMute()">
+            <i class="fas fa-volume-up" id="muteIcon"></i>
+        </div>
 
         <div id="loginScreen" class="ui-layer interactive z-50">
             <div class="card">
@@ -279,8 +293,7 @@
                 </div>
 
                 <h3 class="font-black text-gray-400 text-xs text-left mb-1 ml-1 uppercase">Caixas Misteriosas</h3>
-                <div id="boxesContainer" class="flex flex-col gap-2 overflow-y-auto pr-1 flex-1 h-[200px]">
-                    </div>
+                <div id="boxesContainer" class="flex flex-col gap-2 overflow-y-auto pr-1 flex-1 h-[200px]"></div>
             </div>
         </div>
 
@@ -290,8 +303,7 @@
                     <h2 class="text-2xl font-black text-teal-600"><i class="fas fa-newspaper"></i> NOTÍCIAS</h2>
                     <button onclick="game.openUI('menu')" class="w-8 h-8 bg-gray-100 rounded-full font-bold">X</button>
                 </div>
-                <div id="newsList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar">
-                    </div>
+                <div id="newsList" class="overflow-y-auto flex-1 text-left pr-2 custom-scrollbar"></div>
             </div>
         </div>
 
@@ -367,7 +379,18 @@
     // 🛠️ ÁREA DE CONFIGURAÇÃO FÁCIL
     // =========================================================================
     
-    // 1. CONFIGURAÇÃO DOS GATOS
+    // 1. SONS (Substitua as URLs pelos seus links)
+    const SONS = {
+        musica_menu: '',  // Ex: 'https://exemplo.com/menu.mp3'
+        musica_jogo: '',  // Ex: 'https://exemplo.com/jogo.mp3'
+        pulo: '',         // Ex: 'https://exemplo.com/jump.mp3'
+        score: '',        // Ex: 'https://exemplo.com/coin.mp3'
+        gameover: '',     // Ex: 'https://exemplo.com/die.mp3'
+        click: ''         // Ex: 'https://exemplo.com/click.mp3'
+    };
+
+    // 2. CONFIGURAÇÃO DOS GATOS
+    // Aumentei a "escala_imagem" padrão para 1.3 para os gatos ficarem maiores.
     const MEUS_GATOS = [
         {
             id: 'g001',
@@ -377,8 +400,8 @@
             cor_padrao: '#FF9933',
             multiplicador: 1,
             efeito: 'nenhum',
-            escala_imagem: 2.0,  // Aumente para 1.2, 1.5, etc para deixar maior
-            aparecer_na_loja: true // Se true, aparece na loja diária
+            escala_imagem: 1.3,
+            aparecer_na_loja: true
         },
         {
             id: 'g002',
@@ -388,28 +411,37 @@
             cor_padrao: '#FF9923',
             multiplicador: 1,
             efeito: 'nenhum',
-            escala_imagem: 2.0,
+            escala_imagem: 1.3,
             aparecer_na_loja: true
         },
-        // Adicione mais gatos aqui...
+        {
+            id: 'g003',
+            nome: 'Android Neko',
+            raridade: 'comum',
+            imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/WhatsApp%20Image%202026-01-03%20at%2001.36.43.png', 
+            cor_padrao: '#FF9923',
+            multiplicador: 1,
+            efeito: 'nenhum',
+            escala_imagem: 1.3,
+            aparecer_na_loja: true
+        },
     ];
 
-    // 2. CONFIGURAÇÃO DAS NOTÍCIAS
+    // 3. CONFIGURAÇÃO DAS NOTÍCIAS
     const NOTICIAS = [
         {
             data: "03/01/2026",
-            titulo: "Bem-vindo ao Gato Bird!",
-            texto: "O jogo foi atualizado! Agora você pode ver notícias e configurar o tamanho dos gatos."
+            titulo: "Atualização Deluxe!",
+            texto: "Novos gráficos de nuvens, canos melhorados, suporte a sons e gatos maiores!"
         },
         {
-            data: "01/01/2026",
-            titulo: "Evento de Ano Novo",
-            texto: "Em breve novos gatos temáticos estarão disponíveis."
+            data: "03/01/2026",
+            titulo: "Bem-vindo ao Gato Bird!",
+            texto: "Agora você pode ver notícias e configurar o tamanho dos gatos."
         }
     ];
 
-    // 3. CONFIGURAÇÃO DAS CAIXAS DA LOJA
-    // Você pode adicionar ou remover caixas aqui
+    // 4. CONFIGURAÇÃO DAS CAIXAS
     const CAIXAS_LOJA = [
         { nome: "CAIXA COMUM", raridade: "comum", preco: 10, cor_btn: "bg-gray-400", icone: "📦" },
         { nome: "CAIXA RARA", raridade: "raro", preco: 25, cor_btn: "bg-blue-500", icone: "📫" },
@@ -434,18 +466,39 @@
             const img = new Image(); img.src = cat.imagem; cat.imgObj = img;
         }
     });
+
     // =========================================================================
-    // ⚙️ SISTEMA DE SAVE (INTEGRADO COM FIREBASE)
+    // 🎵 SISTEMA DE AUDIO
+    // =========================================================================
+    const audioCtx = {
+        muted: false,
+        play: (key) => {
+            if(audioCtx.muted || !SONS[key]) return;
+            const a = new Audio(SONS[key]);
+            a.volume = 0.5;
+            a.play().catch(e => {});
+        },
+        toggle: () => {
+            audioCtx.muted = !audioCtx.muted;
+            const icon = document.getElementById('muteIcon');
+            if(audioCtx.muted) {
+                icon.className = 'fas fa-volume-mute text-red-500';
+            } else {
+                icon.className = 'fas fa-volume-up text-gray-700';
+            }
+        }
+    };
+
+    // =========================================================================
+    // ⚙️ SISTEMA DE SAVE
     // =========================================================================
     const SAVE_KEY = 'gb_custom_v3';
     let state = { coins: 0, unlocked: ['g001'], equipped: 'g001', highScore: 0 };
-    // Pontes para o Módulo Firebase acessar o jogo
     window.gameGetState = () => state;
     window.gameSetState = (newData) => {
         state = { ...state, ...newData };
         updateUI();
     };
-    // Função Offline
     window.gameLoadLocal = () => {
         try {
             const saved = localStorage.getItem(SAVE_KEY);
@@ -456,21 +509,19 @@
         } catch(e) { console.log("Erro save local"); }
     };
     const save = () => {
-        // 1. Local (Backup)
         localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-        // 2. Nuvem
         if(window.authSystem && window.authSystem.saveData) {
             window.authSystem.saveData(state);
         }
         updateUI();
     };
+
     // --- DAILY SHOP LOGIC ---
     let dailyShopItems = [];
     function updateDailyShop() {
         const now = Date.now();
         const savedShop = JSON.parse(localStorage.getItem('gb_daily_shop_v3'));
         if (!savedShop || now > savedShop.expires) {
-            // Filtro adicionado: c.aparecer_na_loja !== false
             const pool = MEUS_GATOS.filter(c => ['comum','raro','epico','legendario'].includes(c.raridade) && c.aparecer_na_loja !== false);
             const selected = [];
             if (pool.length > 0) {
@@ -519,6 +570,7 @@
                     state.unlocked.push(id);
                     save();
                     renderDailyShop();
+                    audioCtx.play('click');
                     alert(`Comprou ${cat.nome}!`);
                 } else { alert('Moedas insuficientes!'); }
             };
@@ -551,14 +603,12 @@
             ctx.globalAlpha = 0.3; ctx.fill(); ctx.globalAlpha = 1.0;
         }
 
-        // Lógica de Tamanho (Escala)
-        let drawSize = size * (cat.escala_imagem || 1.0);
+        // Desenha o gato com a escala configurada
+        let drawSize = size * (cat.escala_imagem || 1.3);
 
         if (cat.imgObj && cat.imgObj.complete) {
             ctx.beginPath();
-            // Máscara redonda baseada no tamanho original para não quebrar colisão visual
             ctx.arc(0, 0, size/2, 0, Math.PI*2); ctx.clip();
-            // Desenha a imagem com o tamanho ajustado
             ctx.drawImage(cat.imgObj, -drawSize/2, -drawSize/2, drawSize, drawSize);
         } else {
             ctx.fillStyle = cat.cor_padrao;
@@ -568,11 +618,6 @@
             ctx.beginPath();
             ctx.moveTo(-size*0.3, -size*0.3); ctx.lineTo(-size*0.4, -size*0.6); ctx.lineTo(-size*0.1, -size*0.4); ctx.fill();
             ctx.beginPath(); ctx.moveTo(size*0.3, -size*0.3); ctx.lineTo(size*0.4, -size*0.6); ctx.lineTo(size*0.1, -size*0.4); ctx.fill();
-            // Rosto
-            ctx.fillStyle = 'rgba(0,0,0,0.2)'; 
-            ctx.beginPath();
-            ctx.arc(size*0.2, -size*0.1, size*0.05, 0, Math.PI*2); ctx.fill();
-            ctx.beginPath(); ctx.arc(-size*0.2, -size*0.1, size*0.05, 0, Math.PI*2); ctx.fill();
         }
         ctx.restore();
     }
@@ -581,7 +626,39 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     let frames=0, score=0, playing=false, trail=[];
-    let speed=3.5, gravity=0.25;
+    let speed=3.0, gravity=0.25; // Velocidade ligeiramente reduzida para melhor controle
+    
+    // Background Elements (Nuvens e Montanhas)
+    let clouds = [];
+    for(let i=0; i<5; i++) {
+        clouds.push({x: Math.random()*window.innerWidth, y: Math.random()*200, s: 0.5+Math.random()});
+    }
+    
+    function drawBackground() {
+        // Céu já feito via CSS, desenha nuvens
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        clouds.forEach(c => {
+            c.x -= 0.5 * c.s;
+            if(c.x < -100) c.x = canvas.width + 100;
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 30*c.s, 0, Math.PI*2);
+            ctx.arc(c.x+20*c.s, c.y-10*c.s, 40*c.s, 0, Math.PI*2);
+            ctx.arc(c.x+40*c.s, c.y, 30*c.s, 0, Math.PI*2);
+            ctx.fill();
+        });
+
+        // Silhueta da Cidade/Montanhas (Parallax Fundo)
+        ctx.fillStyle = '#1e5f74'; // Azul escuro montanha
+        ctx.beginPath();
+        ctx.moveTo(0, canvas.height);
+        for(let i=0; i<=canvas.width; i+=50) {
+            // Gera um terreno ondulado baseado em seno
+            ctx.lineTo(i, canvas.height - 100 - Math.sin((i + frames)*0.01)*20);
+        }
+        ctx.lineTo(canvas.width, canvas.height);
+        ctx.fill();
+    }
+
     const bird = {
         x: 60, y: 150, v: 0,
         update: function() {
@@ -589,6 +666,8 @@
             this.y += this.v;
             if(this.y + 15 > canvas.height) gameOver();
             if(this.y < 0) this.y = 0;
+            
+            // Lógica do rastro
             const cat = MEUS_GATOS.find(c => c.id === state.equipped);
             if(cat && (cat.efeito === 'rastro' || cat.efeito === 'arco_iris' || cat.efeito === 'fogo')) {
                 trail.push({x: this.x, y: this.y, age: 0});
@@ -601,42 +680,44 @@
                 t.age++;
                 let opacity = i / trail.length;
                 let size = 20 * opacity;
-
                 if(cat.efeito === 'arco_iris') {
                     const cols = ['#f00','#fa0','#ff0','#0f0','#09f','#50f'];
                     ctx.fillStyle = cols[i%6];
                     ctx.fillRect(t.x-20+(i*2), t.y-10, 6, 20);
-                } else if (cat.efeito === 'fogo') {
-                    ctx.fillStyle = `rgba(255, 100, 0, ${opacity})`;
-                    ctx.beginPath(); ctx.arc(t.x, t.y, size/2 + Math.random()*5, 0, Math.PI*2); ctx.fill();
-                } else if (cat.efeito === 'rastro') {
-                    ctx.fillStyle = RARITIES[cat.raridade]?.color || '#fff';
-                    ctx.globalAlpha = 0.5 * opacity;
+                } else {
+                    ctx.fillStyle = `rgba(255,255,255,${opacity})`;
                     ctx.beginPath(); ctx.arc(t.x, t.y, size/2, 0, Math.PI*2); ctx.fill();
-                    ctx.globalAlpha = 1.0;
                 }
             });
-            drawCat(ctx, cat, this.x, this.y, 45, frames);
+            // O gato agora é desenhado um pouco maior (45 -> 55 size base) + escala
+            drawCat(ctx, cat, this.x, this.y, 55, frames);
         },
-        jump: function() { this.v = -6; }
+        jump: function() { 
+            this.v = -6; 
+            audioCtx.play('pulo');
+        }
     };
 
     const pipes = {
         list: [],
         update: function() {
-            if(frames % 100 === 0) {
-                let gap = 160;
+            if(frames % 110 === 0) { // Mais espaço entre canos
+                let gap = 170; // Gap maior para facilitar visualização
                 let y = Math.random() * (canvas.height - 350) + 100;
                 this.list.push({x: canvas.width, y, gap, scored: false});
             }
             this.list.forEach(p => {
                 p.x -= speed;
-                if(bird.x + 15 > p.x && bird.x - 15 < p.x + 60) {
-                    if(bird.y - 15 < p.y || bird.y + 15 > p.y + p.gap) gameOver();
+                
+                // Colisão
+                if(bird.x + 20 > p.x && bird.x - 20 < p.x + 60) {
+                    if(bird.y - 20 < p.y || bird.y + 20 > p.y + p.gap) gameOver();
                 }
+                
                 if(p.x + 60 < bird.x && !p.scored) {
                     p.scored = true;
                     score++;
+                    audioCtx.play('score');
                     const cat = MEUS_GATOS.find(c => c.id === state.equipped);
                     state.coins += (cat ? cat.multiplicador : 1);
                     document.getElementById('scoreDisplay').innerText = score;
@@ -646,24 +727,31 @@
             if(this.list[0]?.x < -100) this.list.shift();
         },
         draw: function() {
-            ctx.fillStyle = '#22C55E';
-            ctx.strokeStyle = '#14532D';
-            ctx.lineWidth = 4;
             this.list.forEach(p => {
+                // Gradiente Estilo Mario/Flappy Bird
+                let grad = ctx.createLinearGradient(p.x, 0, p.x + 60, 0);
+                grad.addColorStop(0, '#4ade80'); // Verde claro
+                grad.addColorStop(0.5, '#22c55e'); // Verde normal
+                grad.addColorStop(1, '#14532d'); // Verde escuro
+                
+                ctx.fillStyle = grad;
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+
+                // Cano Superior
                 ctx.fillRect(p.x, 0, 60, p.y);
                 ctx.strokeRect(p.x, -2, 60, p.y+2);
-                ctx.fillRect(p.x-5, p.y-25, 70, 25);
-                ctx.strokeRect(p.x-5, p.y-25, 70, 25);
+                // Borda do cano superior
+                ctx.fillRect(p.x-4, p.y-25, 68, 25);
+                ctx.strokeRect(p.x-4, p.y-25, 68, 25);
                 
+                // Cano Inferior
                 let by = p.y + p.gap;
                 ctx.fillRect(p.x, by, 60, canvas.height-by);
                 ctx.strokeRect(p.x, by, 60, canvas.height-by);
-                ctx.fillRect(p.x-5, by, 70, 25);
-                ctx.strokeRect(p.x-5, by, 70, 25);
-                ctx.fillStyle = 'rgba(255,255,255,0.2)';
-                ctx.fillRect(p.x+5, 0, 10, p.y-25);
-                ctx.fillRect(p.x+5, by+25, 10, canvas.height);
-                ctx.fillStyle = '#22C55E';
+                // Borda do cano inferior
+                ctx.fillRect(p.x-4, by, 68, 25);
+                ctx.strokeRect(p.x-4, by, 68, 25);
             });
         }
     };
@@ -682,13 +770,17 @@
     function loop() {
         if(canvas.width!==window.innerWidth) { canvas.width=window.innerWidth; canvas.height=window.innerHeight; }
         ctx.clearRect(0,0,canvas.width,canvas.height);
+        
+        drawBackground(); // Desenha o fundo animado
+        
         if(playing) { bird.update(); pipes.update(); frames++; }
         pipes.draw();
         bird.draw();
+        
         if(!playing && !document.getElementById('menuScreen').classList.contains('hidden')) {
             const mCtx = document.getElementById('menuPreview').getContext('2d');
             mCtx.clearRect(0,0,100,100);
-            drawCat(mCtx, MEUS_GATOS.find(c => c.id === state.equipped), 50, 50, 80, frames);
+            drawCat(mCtx, MEUS_GATOS.find(c => c.id === state.equipped), 50, 50, 70, frames);
         }
         requestAnimationFrame(loop);
     }
@@ -696,6 +788,7 @@
 
     function gameOver() {
         playing = false;
+        audioCtx.play('gameover');
         if(score > state.highScore) state.highScore = score;
         save();
         document.getElementById('gameOverScreen').classList.remove('hidden');
@@ -708,20 +801,25 @@
         startGame: () => {
             playing = true;
             score = 0; frames = 0; trail = [];
+            // Ajusta posição X para 20% da tela para dar mais visão de futuro
+            bird.x = Math.max(60, canvas.width * 0.2); 
             bird.y = canvas.height/2; bird.v = 0;
             pipes.list = [];
             document.querySelectorAll('.ui-layer').forEach(l => l.classList.add('hidden'));
             document.getElementById('hud').classList.remove('hidden');
             document.getElementById('scoreDisplay').innerText = '0';
+            audioCtx.play('click');
         },
+        toggleMute: () => audioCtx.toggle(),
         openUI: (name) => {
+            audioCtx.play('click');
             document.querySelectorAll('.ui-layer').forEach(l => l.classList.add('hidden'));
             document.getElementById(name+'Screen').classList.remove('hidden');
             if(name === 'menu') updateUI();
             if(name === 'shop') {
                 document.getElementById('shopBalance').innerText = state.coins;
                 updateDailyShop();
-                renderShopBoxes(); // Renderiza as caixas configuradas
+                renderShopBoxes();
             }
             if(name === 'collection') renderCollection();
             if(name === 'news') renderNews();
@@ -730,6 +828,7 @@
             }
         },
         buyBox: (tier, cost) => {
+            audioCtx.play('click');
             if(state.coins < cost) return alert("Moedas insuficientes!");
             const pool = MEUS_GATOS.filter(c => c.raridade === tier);
             if(pool.length === 0) return alert("Nenhum gato dessa raridade adicionado no código ainda!");
@@ -839,7 +938,12 @@
                 drawCat(cvs.getContext('2d'), cat, 20, 20, 30, 0);
                 item.appendChild(cvs);
                 item.onclick = () => {
-                    if(owned) { state.equipped = cat.id; save(); renderCollection(); }
+                    if(owned) { 
+                        state.equipped = cat.id; 
+                        save(); 
+                        renderCollection(); 
+                        audioCtx.play('click');
+                    }
                 };
                 grid.appendChild(item);
             });
