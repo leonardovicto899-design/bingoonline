@@ -788,7 +788,7 @@
         { id: 'g017', nome: 'Gato em pé', raridade: 'legendario', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180044488.png', cor_padrao: '#FF9923', multiplicador: 3, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
         { id: 'g018', nome: 'gato de schrödinger morto', raridade: 'secreta', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180259424.png', cor_padrao: '#FF9923', multiplicador: 5, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
         { id: 'g019', nome: 'gato de schrödinger vivo', raridade: 'secreta', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180327109.png', cor_padrao: '#FF9923', multiplicador: 5, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
-        { id: 'g020', nome: 'victor xavier', raridade: '', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180439637.png', cor_padrao: '#FF9923', multiplicador: 10, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
+        { id: 'g020', nome: 'victor xavier', raridade: 'exclusivo', imagem: 'https://uploads.onecompiler.io/43nbuw62r/449fq92k6/imagem_2026-01-03_180439637.png', cor_padrao: '#FF9923', multiplicador: 10, efeito: 'nenhum', escala_imagem: 1.3, aparecer_na_loja: false },
     ];
     window.GAME_CATS = MEUS_GATOS;
     
@@ -813,7 +813,8 @@
         epico: { label: 'Épico', color: '#A855F7' },
         legendario: { label: 'Lendário', color: '#EAB308' },
         mitico: { label: 'Mítico', color: '#EF4444' },
-        secreta: { label: 'Secreto', color: '#10B981' }
+        secreta: { label: 'Secreto', color: '#10B981' },
+        exclusivo: { label: 'Exclusivo', color: '##3c3c3c' }
     };
     
     MEUS_GATOS.forEach(cat => {
@@ -1664,4 +1665,5 @@ buy: async (listingId, price, catId, qty) => {
 </script>
 </body>
 </html>
+
 
