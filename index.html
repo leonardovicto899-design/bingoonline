@@ -1391,45 +1391,45 @@
                 alert("Erro ao criar anúncio (Verifique console).");
             }
         },
-        buy: async (listingId, price, catId, qty) => {
-            if(state.coins < price) return alert("Moedas insuficientes!");
-            try {
-                const { doc, runTransaction } = window.firebaseDb;
-                const listRef = doc(window.firebaseDb, "market_listings", listingId);
-                
-                await runTransaction(window.firebaseDb, async (transaction) => {
-                    const sfDoc = await transaction.get(listRef);
-                    if (!sfDoc.exists()) throw "Anúncio não existe mais.";
-                    
-                    const sellerId = sfDoc.data().sellerId;
-                    const sellerRef = doc(window.firebaseDb, "users", sellerId);
-                    
-                    // Deduz moedas localmente (o jogador)
-                    state.coins -= price;
-                    if(!state.unlocked.includes(catId)) state.unlocked.push(catId);
-                    state.counts[catId] = (state.counts[catId] || 0) + qty;
-                    save();
-
-                    // Paga o vendedor (no banco de dados)
-                    const sellerSnap = await transaction.get(sellerRef);
-                    if(sellerSnap.exists()) {
-                        const sData = sellerSnap.data();
-                        const newCoins = (sData.coins || 0) + price;
-                        transaction.update(sellerRef, { coins: newCoins });
-                    }
-                    
-                    transaction.delete(listRef);
-                });
-                alert("Compra realizada com sucesso!");
-                window.market.load();
-                document.getElementById('shopBalance').innerText = Math.floor(state.coins);
-            } catch (e) {
-                console.error(e);
-                alert("Erro na transação: " + e);
-                // Em caso de erro, seria ideal "estornar" o save local, mas simplificaremos para recarregar
-                window.location.reload(); 
+        // Dentro do objeto window.market
+buy: async (listingId, price, catId, qty) => {
+    if (state.coins < price) return alert("Moedas insuficientes!");
+    
+    try {
+        const { doc, runTransaction, getDoc } = window.firebaseDb;
+        const listRef = doc(window.firebaseDb, "market_listings", listingId);
+        
+        await runTransaction(window.firebaseDb, async (transaction) => {
+            const sfDoc = await transaction.get(listRef);
+            if (!sfDoc.exists()) throw "Este anúncio não existe mais!";
+            
+            const data = sfDoc.data();
+            const sellerRef = doc(window.firebaseDb, "users", data.sellerId);
+            const sellerSnap = await transaction.get(sellerRef);
+            
+            if (sellerSnap.exists()) {
+                const currentSellerCoins = sellerSnap.data().coins || 0;
+                // Adiciona as moedas ao vendedor
+                transaction.update(sellerRef, { coins: currentSellerCoins + price });
             }
-        },
+
+            // Deleta o anúncio do mercado
+            transaction.delete(listRef);
+        });
+
+        // Atualiza o comprador localmente
+        state.coins -= price;
+        if (!state.unlocked.includes(catId)) state.unlocked.push(catId);
+        state.counts[catId] = (state.counts[catId] || 0) + qty;
+        
+        save(); // Salva no LocalStorage e no Firebase do comprador
+        alert("Compra concluída!");
+        window.market.load();
+    } catch (e) {
+        console.error("Erro na transação:", e);
+        alert("Erro ao processar compra. Tente novamente.");
+    }
+},
         load: async () => {
             const list = document.getElementById('marketList');
             if(!list) return;
@@ -1664,3 +1664,4 @@
 </script>
 </body>
 </html>
+
